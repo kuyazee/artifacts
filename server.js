@@ -144,6 +144,30 @@ async function listArtifacts() {
   return metas.filter(Boolean).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
+async function patchArtifact(slug, patch) {
+  const meta = SLUG_RE.test(slug) ? await readMeta(slug) : null;
+  if (!meta) {
+    throw new ApiError(404, `slug "${slug}" not found`);
+  }
+
+  let dir = artifactDir(slug);
+  if (patch.slug !== undefined && patch.slug !== slug) {
+    if (!SLUG_RE.test(patch.slug)) {
+      throw new ApiError(400, 'slug must match [a-z0-9][a-z0-9-]{2,63}');
+    }
+    if (await readMeta(patch.slug)) {
+      throw new ApiError(409, `slug "${patch.slug}" already exists`);
+    }
+    await fs.rename(dir, artifactDir(patch.slug));
+    meta.slug = patch.slug;
+    dir = artifactDir(patch.slug);
+  }
+
+  meta.updatedAt = new Date().toISOString();
+  await fs.writeFile(path.join(dir, 'meta.json'), JSON.stringify(meta, null, 2));
+  return { slug: meta.slug, url: `${BASE_URL}/a/${meta.slug}` };
+}
+
 async function deleteArtifact(slug) {
   if (!SLUG_RE.test(slug) || !(await readMeta(slug))) {
     throw new ApiError(404, `slug "${slug}" not found`);
@@ -223,6 +247,14 @@ app.put('/api/artifacts/:slug', requireAuth, async (req, res, next) => {
   }
 });
 
+app.patch('/api/artifacts/:slug', requireAuth, async (req, res, next) => {
+  try {
+    res.json(await patchArtifact(req.params.slug, req.body));
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.delete('/api/artifacts/:slug', requireAuth, async (req, res, next) => {
   try {
     await deleteArtifact(req.params.slug);
@@ -280,6 +312,22 @@ function createMcpServer() {
     },
     async (args) => {
       const { url } = await saveArtifact(args, { replace: true });
+      return { content: [{ type: 'text', text: url }] };
+    },
+  );
+
+  server.registerTool(
+    'rename_artifact',
+    {
+      title: 'Rename artifact',
+      description: 'Change the URL slug of an existing artifact. Returns the new URL.',
+      inputSchema: {
+        slug: z.string().describe('Current slug'),
+        newSlug: z.string().describe('New URL slug [a-z0-9-], 3-64 chars'),
+      },
+    },
+    async ({ slug, newSlug }) => {
+      const { url } = await patchArtifact(slug, { slug: newSlug });
       return { content: [{ type: 'text', text: url }] };
     },
   );

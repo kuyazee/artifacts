@@ -88,6 +88,8 @@
   #list a { color: #58a6ff; text-decoration: none; }
   #list .del { color: #f85149; cursor: pointer; background: none; border: none; padding: 0; font-size: 13px; font-weight: 400; }
   #list .del:hover { background: none; text-decoration: underline; }
+  #list .act { color: #7d8590; cursor: pointer; background: none; border: none; padding: 0; font-size: 13px; font-weight: 400; }
+  #list .act:hover { background: none; color: #e6edf3; text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -310,7 +312,9 @@
       for (const a of items) {
         const tr = document.createElement('tr');
         tr.innerHTML = '<td><a target="_blank"></a></td><td></td><td></td><td></td>' +
-          '<td><button class="ghost small">Copy</button></td><td><button class="del">delete</button></td>';
+          '<td><button class="ghost small">Copy</button></td>' +
+          '<td><button class="act ren">rename</button></td>' +
+          '<td><button class="del">delete</button></td>';
         const link = tr.querySelector('a');
         link.href = '/a/' + a.slug; link.textContent = a.slug;
         tr.children[1].textContent = a.type;
@@ -318,6 +322,18 @@
         tr.children[3].textContent = (a.updatedAt || '').slice(0, 16).replace('T', ' ');
         tr.querySelector('.ghost').addEventListener('click', () =>
           navigator.clipboard.writeText(location.origin + '/a/' + a.slug));
+        tr.querySelector('.ren').addEventListener('click', async () => {
+          const ns = prompt('New slug for "' + a.slug + '"', a.slug);
+          if (!ns || ns === a.slug) return;
+          const res = await fetch('/api/artifacts/' + a.slug, {
+            method: 'PATCH', headers: headers(), body: JSON.stringify({ slug: ns }),
+          });
+          if (!res.ok) {
+            const d = await res.json().catch(() => ({}));
+            alert(d.error || 'rename failed');
+          }
+          loadList();
+        });
         tr.querySelector('.del').addEventListener('click', async () => {
           await fetch('/api/artifacts/' + a.slug, { method: 'DELETE', headers: headers() });
           loadList();
