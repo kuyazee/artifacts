@@ -114,9 +114,9 @@
 
   <div id="drop">
     <strong>Drag &amp; drop files here</strong> — or click to browse<br>
-    <div class="hint">.html · .jsx · .tsx · .md — published instantly, URL copied per file</div>
+    <div class="hint">.html · .jsx · .tsx · .md · .zip (static site with index.html) — published instantly, URL copied per file</div>
   </div>
-  <input id="file" type="file" accept=".html,.htm,.jsx,.tsx,.md,.markdown" multiple hidden>
+  <input id="file" type="file" accept=".html,.htm,.jsx,.tsx,.md,.markdown,.zip" multiple hidden>
 
   <div id="results"></div>
 
@@ -237,17 +237,35 @@
     $('results').prepend(div);
   }
 
+  async function publishZip(buf, slug, title) {
+    const res = await fetch('/api/artifacts/zip?slug=' + encodeURIComponent(slug) +
+      '&title=' + encodeURIComponent(title), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/zip', 'Authorization': 'Bearer ' + KEY },
+      body: buf,
+    });
+    const data = await res.json();
+    return { ok: res.ok, status: res.status, data };
+  }
+
   async function publishFile(file) {
     const ext = (file.name.split('.').pop() || '').toLowerCase();
     const type = TYPE_BY_EXT[ext];
-    if (!type) return addResult(file.name, 'Unsupported type .' + ext + ' (html/jsx/tsx/md only)', false);
+    if (!type && ext !== 'zip') {
+      return addResult(file.name, 'Unsupported type .' + ext + ' (html/jsx/tsx/md/zip only)', false);
+    }
 
-    const content = await file.text();
+    const isZip = ext === 'zip';
+    const payload = isZip ? await file.arrayBuffer() : await file.text();
+    const send = (slug) => isZip
+      ? publishZip(payload, slug, file.name)
+      : publish({ content: payload, type, slug, title: file.name });
+
     let slug = slugify(file.name);
-    let r = await publish({ content, type, slug, title: file.name });
+    let r = await send(slug);
     if (r.status === 409) {
       slug = slug.slice(0, 59) + '-' + Math.random().toString(36).slice(2, 6);
-      r = await publish({ content, type, slug, title: file.name });
+      r = await send(slug);
     }
     if (r.ok) {
       addResult(file.name, r.data.url, true);

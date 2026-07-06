@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import AdmZip from 'adm-zip';
 import express from 'express';
 import { marked } from 'marked';
 import { customAlphabet } from 'nanoid';
@@ -96,6 +97,113 @@ async function readMeta(slug) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Zip sites
+// ---------------------------------------------------------------------------
+
+const ZIP_ALLOWED_EXT = new Set([
+  'html', 'htm', 'css', 'js', 'mjs', 'json', 'txt', 'md', 'xml', 'csv',
+  'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'avif',
+  'woff', 'woff2', 'ttf', 'otf', 'eot',
+  'mp3', 'wav', 'ogg', 'mp4', 'webm', 'pdf', 'wasm', 'map', 'webmanifest',
+]);
+const ZIP_MAX_FILES = 2000;
+const ZIP_MAX_UNCOMPRESSED = 100 * 1024 * 1024;
+
+// Validates the archive is a hostable static site and returns {relPath, entry}
+// pairs, with a single shared top-level folder stripped if present.
+function extractSiteFiles(zip) {
+  const entries = zip
+    .getEntries()
+    .filter((e) => !e.isDirectory)
+    .filter((e) => {
+      const name = e.entryName;
+      const base = path.posix.basename(name);
+      return !name.startsWith('__MACOSX/') && base !== '.DS_Store' && base !== 'Thumbs.db';
+    });
+
+  if (!entries.length) throw new ApiError(400, 'zip contains no files');
+  if (entries.length > ZIP_MAX_FILES) {
+    throw new ApiError(400, `zip has too many files (${entries.length} > ${ZIP_MAX_FILES})`);
+  }
+
+  let totalSize = 0;
+  for (const e of entries) {
+    const name = e.entryName;
+    if (name.includes('\\') || name.startsWith('/') || name.split('/').includes('..')) {
+      throw new ApiError(400, `unsafe path in zip: ${name}`);
+    }
+    if (((e.attr >>> 16) & 0xf000) === 0xa000) {
+      throw new ApiError(400, `symlinks not allowed in zip: ${name}`);
+    }
+    totalSize += e.header.size;
+  }
+  if (totalSize > ZIP_MAX_UNCOMPRESSED) {
+    throw new ApiError(400, 'zip uncompressed size exceeds 100 MB');
+  }
+
+  // If everything lives in one top-level folder (common when zipping a dir), strip it.
+  const tops = new Set(entries.map((e) => e.entryName.split('/')[0]));
+  const strip = tops.size === 1 && entries.every((e) => e.entryName.includes('/'))
+    ? `${[...tops][0]}/`
+    : '';
+  const files = entries.map((e) => ({ relPath: e.entryName.slice(strip.length), entry: e }));
+
+  const unsupported = files
+    .map((f) => f.relPath)
+    .filter((p) => !ZIP_ALLOWED_EXT.has(path.posix.extname(p).slice(1).toLowerCase()));
+  if (unsupported.length) {
+    throw new ApiError(
+      400,
+      `unsupported files for static hosting: ${unsupported.slice(0, 10).join(', ')}` +
+        (unsupported.length > 10 ? ` (+${unsupported.length - 10} more)` : ''),
+    );
+  }
+
+  if (!files.some((f) => f.relPath === 'index.html')) {
+    throw new ApiError(400, 'zip must contain index.html at its root');
+  }
+  return files;
+}
+
+async function saveZipArtifact(buffer, { slug, title, expiresAt }) {
+  if (slug !== undefined && !SLUG_RE.test(slug)) {
+    throw new ApiError(400, 'slug must match [a-z0-9][a-z0-9-]{2,63}');
+  }
+  const expiry = expiresAt !== undefined ? parseExpiresAt(expiresAt) : undefined;
+
+  let zip;
+  try {
+    zip = new AdmZip(buffer);
+  } catch {
+    throw new ApiError(400, 'invalid zip file');
+  }
+  const files = extractSiteFiles(zip);
+
+  const finalSlug = slug || nanoid();
+  if (await readMeta(finalSlug)) {
+    throw new ApiError(409, `slug "${finalSlug}" already exists`);
+  }
+
+  const siteDir = path.join(artifactDir(finalSlug), 'site');
+  for (const { relPath, entry } of files) {
+    const target = path.join(siteDir, relPath);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, entry.getData());
+  }
+  const meta = {
+    slug: finalSlug,
+    type: 'zip',
+    title: title || finalSlug,
+    files: files.length,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  if (expiry !== undefined) meta.expiresAt = expiry;
+  await fs.writeFile(path.join(artifactDir(finalSlug), 'meta.json'), JSON.stringify(meta, null, 2));
+  return { slug: finalSlug, url: `${BASE_URL}/a/${finalSlug}/`, files: files.length };
+}
+
 function parseExpiresAt(value) {
   if (value === null || value === '') return undefined;
   if (typeof value !== 'string' || Number.isNaN(Date.parse(value))) {
@@ -127,6 +235,9 @@ async function saveArtifact({ content, type = 'html', slug, title, expiresAt }, 
   }
   if (replace && !existing) {
     throw new ApiError(404, `slug "${finalSlug}" not found`);
+  }
+  if (existing?.type === 'zip') {
+    throw new ApiError(400, 'cannot replace a zip site with inline content; delete and re-upload');
   }
 
   const finalTitle = title || finalSlug;
@@ -249,22 +360,72 @@ app.get('/a/:slug', async (req, res) => {
     'Referrer-Policy': 'no-referrer',
     'Cache-Control': 'no-cache',
   });
+  if (meta.type === 'zip') {
+    // Trailing slash so relative asset URLs resolve inside the site.
+    if (!req.path.endsWith('/')) return res.redirect(301, `/a/${slug}/`);
+    return res.sendFile(path.join(artifactDir(slug), 'site', 'index.html'));
+  }
   res.sendFile(path.join(artifactDir(slug), 'index.html'));
 });
 
-app.get('/a/:slug/source', async (req, res) => {
+app.get('/a/:slug/source', async (req, res, next) => {
   const { slug } = req.params;
   const meta = SLUG_RE.test(slug) ? await readMeta(slug) : null;
   if (!meta || meta.disabled) return res.status(404).type('text/plain').send('artifact not found');
   if (isExpired(meta)) return res.status(410).type('text/plain').send('artifact expired');
+  if (meta.type === 'zip') return next(); // zip sites serve /source as a site path
   res.set({ 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
   res.type('text/plain');
   res.sendFile(path.join(artifactDir(slug), `source.${SOURCE_EXT[meta.type]}`));
 });
 
+app.get('/a/:slug/*', async (req, res) => {
+  const { slug } = req.params;
+  const meta = SLUG_RE.test(slug) ? await readMeta(slug) : null;
+  if (!meta || meta.disabled) return res.status(404).type('text/plain').send('artifact not found');
+  if (isExpired(meta)) return res.status(410).type('text/plain').send('artifact expired');
+  if (meta.type !== 'zip') return res.status(404).type('text/plain').send('not found');
+
+  const siteDir = path.join(artifactDir(slug), 'site');
+  const target = path.normalize(path.join(siteDir, req.params[0]));
+  if (target !== siteDir && !target.startsWith(siteDir + path.sep)) {
+    return res.status(404).type('text/plain').send('not found');
+  }
+  res.set({
+    'Content-Security-Policy': ARTIFACT_CSP,
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'no-referrer',
+    'Cache-Control': 'no-cache',
+  });
+  let file = target;
+  try {
+    if ((await fs.stat(file)).isDirectory()) file = path.join(file, 'index.html');
+  } catch {}
+  res.sendFile(file, (err) => {
+    if (err && !res.headersSent) res.status(404).type('text/plain').send('not found');
+  });
+});
+
 app.post('/api/artifacts', requireAuth, async (req, res, next) => {
   try {
     res.status(201).json(await saveArtifact(req.body));
+  } catch (err) {
+    next(err);
+  }
+});
+
+const zipBody = express.raw({
+  type: ['application/zip', 'application/x-zip-compressed', 'application/octet-stream'],
+  limit: '50mb',
+});
+
+app.post('/api/artifacts/zip', requireAuth, zipBody, async (req, res, next) => {
+  try {
+    if (!Buffer.isBuffer(req.body) || !req.body.length) {
+      throw new ApiError(400, 'raw zip body required (Content-Type: application/zip)');
+    }
+    const { slug, title, expiresAt } = req.query;
+    res.status(201).json(await saveZipArtifact(req.body, { slug, title, expiresAt }));
   } catch (err) {
     next(err);
   }
@@ -499,7 +660,7 @@ app.use((err, req, res, next) => {
     return res.status(err.status).json({ error: err.message });
   }
   if (err?.type === 'entity.too.large') {
-    return res.status(413).json({ error: 'body too large (10mb limit)' });
+    return res.status(413).json({ error: 'body too large (10mb json / 50mb zip limit)' });
   }
   console.error(err);
   res.status(500).json({ error: 'internal server error' });
