@@ -1,0 +1,20 @@
+{
+  "name": "artifacts-host",
+  "version": "1.0.0",
+  "description": "Self-hosted publishable artifacts: POST HTML/JSX/Markdown, get a public non-crawlable URL",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "express": "^4.21.2",
+    "marked": "^15.0.0",
+    "nanoid": "^5.0.9",
+    "zod": "^3.24.1"
+  }
+}

@@ -1,0 +1,137 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>artifacts</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    max-width: 860px; margin: 0 auto; padding: 24px 16px 60px;
+    background: #0d1117; color: #e6edf3;
+  }
+  h1 { font-size: 20px; margin: 0 0 20px; }
+  h1 span { color: #7d8590; font-weight: 400; }
+  label { display: block; font-size: 12px; color: #7d8590; margin: 12px 0 4px; }
+  input, select, textarea {
+    width: 100%; padding: 8px 10px; border-radius: 6px;
+    border: 1px solid #30363d; background: #161b22; color: #e6edf3;
+    font-size: 14px; font-family: inherit;
+  }
+  textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; min-height: 320px; font-size: 13px; }
+  .row { display: flex; gap: 12px; }
+  .row > div { flex: 1; }
+  button {
+    margin-top: 16px; padding: 10px 20px; border: none; border-radius: 6px;
+    background: #238636; color: #fff; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  button:hover { background: #2ea043; }
+  #result { margin-top: 16px; padding: 12px; border-radius: 6px; display: none; font-size: 14px; }
+  #result.ok { display: block; background: #12261e; border: 1px solid #238636; }
+  #result.err { display: block; background: #2d1215; border: 1px solid #da3633; }
+  #result a { color: #58a6ff; word-break: break-all; }
+  #list { margin-top: 32px; }
+  #list h2 { font-size: 14px; color: #7d8590; }
+  #list table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  #list td, #list th { text-align: left; padding: 6px 8px; border-bottom: 1px solid #21262d; }
+  #list a { color: #58a6ff; text-decoration: none; }
+  #list .del { color: #f85149; cursor: pointer; background: none; border: none; padding: 0; margin: 0; font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>artifacts <span>— publish HTML / JSX / Markdown</span></h1>
+
+<label>API key (stored in this browser)</label>
+<input id="key" type="password" placeholder="ARTIFACTS_API_KEY">
+
+<div class="row">
+  <div>
+    <label>Type</label>
+    <select id="type">
+      <option value="html">html</option>
+      <option value="jsx">jsx</option>
+      <option value="tsx">tsx</option>
+      <option value="md">md</option>
+    </select>
+  </div>
+  <div>
+    <label>Custom slug (optional)</label>
+    <input id="slug" placeholder="random if empty">
+  </div>
+  <div>
+    <label>Title (optional)</label>
+    <input id="title" placeholder="artifact title">
+  </div>
+</div>
+
+<label>Content</label>
+<textarea id="content" placeholder="Paste your HTML, a React component with a default export, or Markdown…" spellcheck="false"></textarea>
+
+<button id="publish">Publish</button>
+<div id="result"></div>
+
+<div id="list">
+  <h2>Published artifacts</h2>
+  <table><tbody id="rows"></tbody></table>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  $('key').value = localStorage.getItem('artifactsKey') || '';
+  $('key').addEventListener('change', () => localStorage.setItem('artifactsKey', $('key').value));
+
+  const headers = () => ({
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer ' + $('key').value,
+  });
+
+  function show(cls, html) {
+    const r = $('result');
+    r.className = cls;
+    r.innerHTML = html;
+  }
+
+  $('publish').addEventListener('click', async () => {
+    const body = { content: $('content').value, type: $('type').value };
+    if ($('slug').value) body.slug = $('slug').value;
+    if ($('title').value) body.title = $('title').value;
+    try {
+      const res = await fetch('/api/artifacts', { method: 'POST', headers: headers(), body: JSON.stringify(body) });
+      const data = await res.json();
+      if (!res.ok) return show('err', 'Error: ' + (data.error || res.status));
+      show('ok', 'Published: <a href="' + data.url + '" target="_blank">' + data.url + '</a>');
+      loadList();
+    } catch (e) {
+      show('err', 'Request failed: ' + e.message);
+    }
+  });
+
+  async function loadList() {
+    if (!$('key').value) return;
+    try {
+      const res = await fetch('/api/artifacts', { headers: headers() });
+      if (!res.ok) return;
+      const items = await res.json();
+      $('rows').innerHTML = items.map((a) =>
+        '<tr><td><a href="/a/' + a.slug + '" target="_blank">' + a.slug + '</a></td>' +
+        '<td>' + a.type + '</td><td>' + (a.title || '') + '</td>' +
+        '<td>' + a.updatedAt.slice(0, 16).replace('T', ' ') + '</td>' +
+        '<td><button class="del" data-slug="' + a.slug + '">delete</button></td></tr>'
+      ).join('');
+    } catch {}
+  }
+
+  $('rows').addEventListener('click', async (e) => {
+    const slug = e.target.dataset && e.target.dataset.slug;
+    if (!slug) return;
+    await fetch('/api/artifacts/' + slug, { method: 'DELETE', headers: headers() });
+    loadList();
+  });
+
+  loadList();
+</script>
+</body>
+</html>
