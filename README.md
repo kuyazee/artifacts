@@ -43,9 +43,9 @@ docker run -p 3000:3000 -v artifacts-data:/data \
 ## REST API
 
 ```
-POST   /api/artifacts        {content, type: html|jsx|tsx|md, slug?, title?} → 201 {slug, url}
-PUT    /api/artifacts/:slug  {content, type, title?}                         → {slug, url}
-PATCH  /api/artifacts/:slug  {slug?, disabled?}                              → {slug, url}   (rename / disable-enable)
+POST   /api/artifacts        {content, type: html|jsx|tsx|md, slug?, title?, expiresAt?} → 201 {slug, url}
+PUT    /api/artifacts/:slug  {content, type, title?, expiresAt?}             → {slug, url}
+PATCH  /api/artifacts/:slug  {slug?, disabled?, expiresAt?}                  → {slug, url}   (rename / disable / expiry)
 DELETE /api/artifacts/:slug                                                  → {deleted}
 GET    /api/artifacts        list                                            → [{slug, type, title, createdAt, updatedAt}]
 GET    /a/:slug              rendered artifact (public)
@@ -53,6 +53,8 @@ GET    /a/:slug/source       original uploaded source, text/plain (public)
 ```
 
 All `/api/*` and `/mcp` calls need `Authorization: Bearer $ARTIFACTS_API_KEY`. Body limit 10 MB. `POST` with an existing slug → `409` (use `PUT` to update).
+
+Disabled artifacts return `404`; expired ones (`expiresAt` in the past) return `410`. Both keep their content — re-enable or clear/extend the expiry to serve again.
 
 ```bash
 curl -s -X POST https://artifacts.example.com/api/artifacts \
@@ -97,11 +99,12 @@ Streamable HTTP endpoint at `/mcp`, bearer-authenticated. Tools:
 
 | Tool | Args | Returns |
 |---|---|---|
-| `publish_artifact` | `content`, `type`, `slug?`, `title?` | public URL |
+| `publish_artifact` | `content`, `type`, `slug?`, `title?`, `expiresAt?` | public URL |
 | `update_artifact` | `slug`, `content`, `type`, `title?` | public URL |
 | `rename_artifact` | `slug`, `newSlug` | new public URL |
 | `disable_artifact` | `slug` | confirmation (URL serves 404, content kept) |
 | `enable_artifact` | `slug` | confirmation |
+| `set_artifact_expiry` | `slug`, `expiresAt` (ISO 8601 or `null` to clear) | confirmation |
 | `list_artifacts` | — | JSON list |
 | `delete_artifact` | `slug` | confirmation |
 

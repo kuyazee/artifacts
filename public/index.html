@@ -317,6 +317,7 @@
           '<td><button class="ghost small">Copy</button></td>' +
           '<td><button class="act ren">rename</button></td>' +
           '<td><button class="act tgl"></button></td>' +
+          '<td><button class="act exp"></button></td>' +
           '<td><button class="del">delete</button></td>';
         const link = tr.querySelector('a');
         link.href = '/a/' + a.slug; link.textContent = a.slug;
@@ -344,6 +345,26 @@
           await fetch('/api/artifacts/' + a.slug, {
             method: 'PATCH', headers: headers(), body: JSON.stringify({ disabled: !a.disabled }),
           });
+          loadList();
+        });
+        const expired = a.expiresAt && Date.parse(a.expiresAt) <= Date.now();
+        if (expired) tr.classList.add('off');
+        const exp = tr.querySelector('.exp');
+        exp.textContent = a.expiresAt
+          ? (expired ? 'expired' : 'exp ' + a.expiresAt.slice(0, 10))
+          : 'expiry';
+        exp.addEventListener('click', async () => {
+          const v = prompt(
+            'Expiry for "' + a.slug + '" (e.g. 2026-08-01 or 2026-08-01T12:00). Empty to clear.',
+            a.expiresAt ? a.expiresAt.slice(0, 16) : '');
+          if (v === null) return;
+          const res = await fetch('/api/artifacts/' + a.slug, {
+            method: 'PATCH', headers: headers(), body: JSON.stringify({ expiresAt: v.trim() || null }),
+          });
+          if (!res.ok) {
+            const d = await res.json().catch(() => ({}));
+            alert(d.error || 'expiry update failed');
+          }
           loadList();
         });
         tr.querySelector('.del').addEventListener('click', async () => {

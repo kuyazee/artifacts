@@ -96,10 +96,23 @@ async function readMeta(slug) {
   }
 }
 
-async function saveArtifact({ content, type = 'html', slug, title }, { replace = false } = {}) {
+function parseExpiresAt(value) {
+  if (value === null || value === '') return undefined;
+  if (typeof value !== 'string' || Number.isNaN(Date.parse(value))) {
+    throw new ApiError(400, 'expiresAt must be an ISO 8601 date string or null');
+  }
+  return new Date(value).toISOString();
+}
+
+function isExpired(meta) {
+  return Boolean(meta.expiresAt && Date.parse(meta.expiresAt) <= Date.now());
+}
+
+async function saveArtifact({ content, type = 'html', slug, title, expiresAt }, { replace = false } = {}) {
   if (typeof content !== 'string' || !content.trim()) {
     throw new ApiError(400, 'content (non-empty string) is required');
   }
+  const expiry = expiresAt !== undefined ? parseExpiresAt(expiresAt) : undefined;
   if (!TYPES.includes(type)) {
     throw new ApiError(400, `type must be one of: ${TYPES.join(', ')}`);
   }
@@ -133,6 +146,7 @@ async function saveArtifact({ content, type = 'html', slug, title }, { replace =
     createdAt: existing?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
+  if (expiresAt !== undefined) meta.expiresAt = expiry;
   await fs.writeFile(path.join(dir, 'meta.json'), JSON.stringify(meta, null, 2));
   return { slug: finalSlug, url: `${BASE_URL}/a/${finalSlug}` };
 }
@@ -169,6 +183,10 @@ async function patchArtifact(slug, patch) {
       throw new ApiError(400, 'disabled must be a boolean');
     }
     meta.disabled = patch.disabled || undefined;
+  }
+
+  if (patch.expiresAt !== undefined) {
+    meta.expiresAt = parseExpiresAt(patch.expiresAt);
   }
 
   meta.updatedAt = new Date().toISOString();
@@ -222,6 +240,9 @@ app.get('/a/:slug', async (req, res) => {
   if (!meta || meta.disabled) {
     return res.status(404).type('text/plain').send('artifact not found');
   }
+  if (isExpired(meta)) {
+    return res.status(410).type('text/plain').send('artifact expired');
+  }
   res.set({
     'Content-Security-Policy': ARTIFACT_CSP,
     'X-Content-Type-Options': 'nosniff',
@@ -235,6 +256,7 @@ app.get('/a/:slug/source', async (req, res) => {
   const { slug } = req.params;
   const meta = SLUG_RE.test(slug) ? await readMeta(slug) : null;
   if (!meta || meta.disabled) return res.status(404).type('text/plain').send('artifact not found');
+  if (isExpired(meta)) return res.status(410).type('text/plain').send('artifact expired');
   res.set({ 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
   res.type('text/plain');
   res.sendFile(path.join(artifactDir(slug), `source.${SOURCE_EXT[meta.type]}`));
@@ -299,6 +321,10 @@ function createMcpServer() {
         type: z.enum(['html', 'jsx', 'tsx', 'md']).default('html'),
         slug: z.string().optional().describe('Custom URL slug [a-z0-9-], 3-64 chars'),
         title: z.string().optional(),
+        expiresAt: z
+          .string()
+          .optional()
+          .describe('ISO 8601 datetime after which the URL stops serving (410)'),
       },
     },
     async (args) => {
@@ -338,6 +364,27 @@ function createMcpServer() {
     async ({ slug, newSlug }) => {
       const { url } = await patchArtifact(slug, { slug: newSlug });
       return { content: [{ type: 'text', text: url }] };
+    },
+  );
+
+  server.registerTool(
+    'set_artifact_expiry',
+    {
+      title: 'Set artifact expiry',
+      description:
+        'Set or clear the expiry of an artifact. After expiry the URL returns 410 but the content is kept.',
+      inputSchema: {
+        slug: z.string(),
+        expiresAt: z
+          .string()
+          .nullable()
+          .describe('ISO 8601 datetime, or null to clear the expiry'),
+      },
+    },
+    async ({ slug, expiresAt }) => {
+      await patchArtifact(slug, { expiresAt });
+      const text = expiresAt ? `${slug} expires ${expiresAt}` : `expiry cleared for ${slug}`;
+      return { content: [{ type: 'text', text }] };
     },
   );
 
