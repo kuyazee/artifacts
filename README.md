@@ -1,44 +1,75 @@
 # artifacts-host
 
-Self-hosted publishable artifacts, Claude-artifacts style. POST an HTML, JSX/TSX (single React component), or Markdown file — get back a public, non-crawlable URL:
+**Self-hosted, Claude-style artifact publishing.** POST an HTML page, a React component, a Markdown doc, or a whole zipped static site — get back a public, unguessable, non-crawlable URL on your own domain. Built for coding agents (MCP server included) and humans (drag-and-drop web UI included).
 
-```
-https://artifacts.example.com/a/{slug}
-```
+[![CI](https://github.com/kuyazee/artifacts/actions/workflows/ci.yml/badge.svg)](https://github.com/kuyazee/artifacts/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Node ≥22](https://img.shields.io/badge/node-%E2%89%A522-brightgreen.svg)](package.json)
 
-- Slugs are random unguessable IDs (`nanoid(10)`) or custom (`[a-z0-9-]`, 3–64 chars).
-- Every response carries `X-Robots-Tag: noindex, nofollow`; `robots.txt` disallows everything.
-- JSX/TSX is wrapped at upload time in a Babel-standalone + esm.sh import-map shell — arbitrary npm imports work (`recharts`, `lucide-react`, …), no build step. Tailwind available via CDN.
-- Markdown is rendered server-side into a styled page.
-- Writes require a bearer token (`ARTIFACTS_API_KEY`). Reads are public — the unguessable URL is the access control.
-- Storage is plain files under `/data/artifacts/<slug>/` — no database.
-- Built-in MCP server (streamable HTTP) at `/mcp` for coding agents.
-- Minimal paste-to-publish web UI at `/`.
+![Web UI](docs/screenshot.png)
 
-## Run
+## Why
+
+AI assistants generate a lot of shareable output — dashboards, prototypes, reports, little apps. Claude's hosted artifacts are great, but the URLs live on someone else's infrastructure. This is the ~600-line self-hosted version:
+
+- **One tiny Node service.** Express + a handful of deps. No database, no accounts, no build step — artifacts are plain files under `/data`.
+- **Agent-native.** Built-in MCP server (streamable HTTP), so Claude Code, Codex, or any MCP client can publish with one tool call. Everything is also a single `curl`.
+- **Private by default.** Random unguessable slugs, `noindex` everywhere, bearer-token writes, optional expiry.
+
+## Features
+
+- **Four content types:** HTML, JSX/TSX (single React component, rendered client-side via esm.sh — arbitrary npm imports, no build), Markdown (rendered server-side), and **zip sites** (multi-file static projects with images/CSS/JS).
+- **MCP server** at `/mcp` — publish, update, rename, disable/enable, set expiry, list, delete.
+- **Web UI** at `/` — drag-and-drop or paste to publish, manage everything, locked behind your API key.
+- **Lifecycle controls:** rename slugs, disable without deleting (404), auto-expire (`expiresAt` → 410), delete.
+- **Non-crawlable:** `X-Robots-Tag: noindex, nofollow` on every response, deny-all `robots.txt`.
+- **Zip uploads are validated** before anything is stored: `index.html` required, static-only extension whitelist, traversal/symlink rejection, size and file-count limits.
+
+## Quickstart
+
+### docker compose (recommended)
 
 ```bash
-ARTIFACTS_API_KEY=$(openssl rand -hex 32) \
-BASE_URL=https://artifacts.example.com \
-DATA_DIR=/data \
-node server.js
+git clone https://github.com/kuyazee/artifacts && cd artifacts
+ARTIFACTS_API_KEY=$(openssl rand -hex 32) BASE_URL=https://artifacts.example.com docker compose up -d
 ```
 
-Or Docker:
+### docker
 
 ```bash
-docker build -t artifacts-host .
-docker run -p 3000:3000 -v artifacts-data:/data \
-  -e ARTIFACTS_API_KEY=... -e BASE_URL=https://artifacts.example.com artifacts-host
+docker run -d -p 3000:3000 -v artifacts-data:/data \
+  -e ARTIFACTS_API_KEY=$(openssl rand -hex 32) \
+  -e BASE_URL=https://artifacts.example.com \
+  ghcr.io/kuyazee/artifacts:latest
 ```
 
-### Coolify
+### bare node
 
-1. Add resource → this repo → Dockerfile build pack.
-2. Ports Exposes: `3000`. Health check path: `/healthz`.
-3. Env vars: `ARTIFACTS_API_KEY` (secret), `BASE_URL=https://artifacts.example.com`.
-4. Persistent storage: volume mounted at `/data`.
-5. Set the domain/FQDN and deploy.
+```bash
+npm ci
+ARTIFACTS_API_KEY=$(openssl rand -hex 32) BASE_URL=https://artifacts.example.com node server.js
+```
+
+Then publish something:
+
+```bash
+curl -s -X POST https://artifacts.example.com/api/artifacts \
+  -H "Authorization: Bearer $ARTIFACTS_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"content": "<h1>hello</h1>", "type": "html", "slug": "hello"}'
+# {"slug":"hello","url":"https://artifacts.example.com/a/hello"}
+```
+
+Works on any Dockerfile-based PaaS (Coolify, CapRover, Dokploy, Railway…): expose port `3000`, mount a volume at `/data`, set the two env vars, health check `GET /healthz`.
+
+## Configuration
+
+| Env var | Required | Default | Purpose |
+|---|---|---|---|
+| `ARTIFACTS_API_KEY` | yes | — | Bearer token for all writes and the MCP endpoint |
+| `BASE_URL` | recommended | `http://localhost:3000` | Public origin used in returned URLs |
+| `DATA_DIR` | no | `/data` | Where artifacts are stored (plain files) |
+| `PORT` | no | `3000` | Listen port |
 
 ## REST API
 
@@ -53,17 +84,9 @@ GET    /a/:slug              rendered artifact (public)
 GET    /a/:slug/source       original uploaded source, text/plain (public)
 ```
 
-All `/api/*` and `/mcp` calls need `Authorization: Bearer $ARTIFACTS_API_KEY`. Body limit 10 MB. `POST` with an existing slug → `409` (use `PUT` to update).
+All `/api/*` and `/mcp` calls need `Authorization: Bearer $ARTIFACTS_API_KEY`. Body limits: 10 MB JSON, 50 MB zip. `POST` with an existing slug → `409` (use `PUT` to update).
 
 Disabled artifacts return `404`; expired ones (`expiresAt` in the past) return `410`. Both keep their content — re-enable or clear/extend the expiry to serve again.
-
-```bash
-curl -s -X POST https://artifacts.example.com/api/artifacts \
-  -H "Authorization: Bearer $ARTIFACTS_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"content": "<h1>hello</h1>", "type": "html", "slug": "hello"}'
-# {"slug":"hello","url":"https://artifacts.example.com/a/hello"}
-```
 
 Publish a file:
 
@@ -145,7 +168,7 @@ url = "https://artifacts.example.com/mcp"
 bearer_token_env_var = "ARTIFACTS_API_KEY"
 ```
 
-### Any other agent (Hermes, scripts, …)
+### Any other agent (scripts, …)
 
 No MCP needed — one curl call (see REST API above). Suggested snippet for a global CLAUDE.md / AGENTS.md:
 
@@ -158,3 +181,14 @@ Single-user service. Uploaded HTML executes on this origin, so:
 - Host it on a dedicated subdomain that serves nothing else and never sets cookies.
 - Write API is bearer-header-only (no cookies) — hosted JS cannot CSRF it.
 - Artifact responses carry `X-Robots-Tag: noindex`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, and a CSP that limits external requests to esm.sh and major CDNs.
+- Reads are public by design; the unguessable slug is the access control. Don't publish secrets.
+
+See [SECURITY.md](SECURITY.md) for what counts as a vulnerability and how to report one.
+
+## Contributing
+
+PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). The whole test suite is one shell script (`.github/workflows/smoke.sh`) you can run against a local dev server.
+
+## License
+
+[MIT](LICENSE) © 2026 Zonily Jame
