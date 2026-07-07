@@ -1,0 +1,20 @@
+services:
+  artifacts:
+    build: .
+    # Or use the prebuilt image instead of building locally:
+    # image: ghcr.io/kuyazee/artifacts:latest
+    ports:
+      - "3000:3000"
+    environment:
+      # Generate one with: openssl rand -hex 32
+      ARTIFACTS_API_KEY: ${ARTIFACTS_API_KEY:?set ARTIFACTS_API_KEY}
+      # Public base URL used in returned artifact links
+      BASE_URL: ${BASE_URL:-http://localhost:3000}
+    volumes:
+      - artifacts-data:/data
+    restart: unless-stopped
+    # No healthcheck: node:22-slim ships without curl/wget.
+    # Point external monitoring at GET /healthz instead.
+
+volumes:
+  artifacts-data:
