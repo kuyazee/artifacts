@@ -118,6 +118,35 @@ The archive is validated before anything is stored:
 
 Rename, disable/enable, expiry, and delete all work the same as single-file artifacts. `PUT` (inline content) is refused on zip sites — delete and re-upload instead. The web UI accepts dropped `.zip` files. No MCP tool (binary payload) — agents should use the curl call above.
 
+## CLI
+
+Everything the API does, from your terminal. Ships with the repo (`cli.js`, no extra dependencies):
+
+```bash
+export ARTIFACTS_URL=https://artifacts.example.com
+export ARTIFACTS_API_KEY=...
+
+npx github:kuyazee/artifacts publish page.html --slug hello   # or: node cli.js ...
+# https://artifacts.example.com/a/hello
+
+npx github:kuyazee/artifacts deploy ./my-site --slug my-site  # zips a directory and deploys it
+# https://artifacts.example.com/a/my-site/ (12 files)
+```
+
+```
+artifacts publish <file> [--slug s] [--title t] [--expires ISO] [--type html|jsx|tsx|md]
+artifacts deploy <dir|zip> [--slug s] [--title t] [--expires ISO]
+artifacts update <slug> <file>
+artifacts list
+artifacts rename <slug> <new-slug>
+artifacts disable <slug> | enable <slug>
+artifacts expire <slug> <ISO-date|never>
+artifacts delete <slug>
+artifacts source <slug> [-o file]
+```
+
+Type is inferred from the file extension; `--url`/`--key` flags override the env vars.
+
 ## JSX/TSX artifacts
 
 Upload a single React component with a **default export**. Imports of `react`, `react-dom`, `recharts`, `lucide-react` are pinned; any other package import resolves via `https://esm.sh/<pkg>?external=react,react-dom` automatically. Tailwind classes work out of the box.

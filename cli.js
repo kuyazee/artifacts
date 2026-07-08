@@ -1,0 +1,193 @@
+#!/usr/bin/env node
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { parseArgs } from 'node:util';
+
+import AdmZip from 'adm-zip';
+
+const USAGE = `artifacts — publish to a self-hosted artifacts instance
+
+Usage:
+  artifacts publish <file> [--slug s] [--title t] [--expires ISO] [--type html|jsx|tsx|md]
+  artifacts deploy <dir|zip> [--slug s] [--title t] [--expires ISO]
+  artifacts update <slug> <file> [--title t] [--type html|jsx|tsx|md]
+  artifacts list
+  artifacts rename <slug> <new-slug>
+  artifacts disable <slug>
+  artifacts enable <slug>
+  artifacts expire <slug> <ISO-date|never>
+  artifacts delete <slug>
+  artifacts source <slug> [-o file]
+
+Connection (flags override env):
+  --url   server origin        [env: ARTIFACTS_URL]
+  --key   write API key        [env: ARTIFACTS_API_KEY]`;
+
+const EXT_TYPES = { '.html': 'html', '.htm': 'html', '.jsx': 'jsx', '.tsx': 'tsx', '.md': 'md', '.markdown': 'md' };
+
+const { values: opts, positionals } = parseArgs({
+  options: {
+    url: { type: 'string' },
+    key: { type: 'string' },
+    slug: { type: 'string' },
+    title: { type: 'string' },
+    expires: { type: 'string' },
+    type: { type: 'string' },
+    output: { type: 'string', short: 'o' },
+    help: { type: 'boolean', short: 'h' },
+  },
+  allowPositionals: true,
+});
+
+const [command, ...args] = positionals;
+
+if (opts.help || !command) {
+  console.log(USAGE);
+  process.exit(command ? 0 : 1);
+}
+
+const url = (opts.url || process.env.ARTIFACTS_URL || '').replace(/\/$/, '');
+const key = opts.key || process.env.ARTIFACTS_API_KEY;
+
+if (!url) fail('server URL required: pass --url or set ARTIFACTS_URL');
+
+async function api(method, apiPath, { body, contentType, auth = true } = {}) {
+  if (auth && !key) fail('API key required: pass --key or set ARTIFACTS_API_KEY');
+  const headers = {};
+  if (auth) headers.authorization = `Bearer ${key}`;
+  if (contentType) headers['content-type'] = contentType;
+  const res = await fetch(url + apiPath, { method, headers, body });
+  const text = await res.text();
+  if (!res.ok) fail(`${res.status} ${res.statusText}: ${text.trim()}`);
+  return text;
+}
+
+async function apiJson(method, apiPath, body) {
+  const text = await api(method, apiPath, {
+    body: body === undefined ? undefined : JSON.stringify(body),
+    contentType: body === undefined ? undefined : 'application/json',
+  });
+  return JSON.parse(text);
+}
+
+function fail(message) {
+  console.error(`artifacts: ${message}`);
+  process.exit(1);
+}
+
+function inferType(file) {
+  if (opts.type) return opts.type;
+  const type = EXT_TYPES[path.extname(file).toLowerCase()];
+  if (!type) fail(`cannot infer type from "${file}" — pass --type html|jsx|tsx|md`);
+  return type;
+}
+
+function need(count, hint) {
+  if (args.length < count) fail(`usage: artifacts ${command} ${hint}`);
+}
+
+switch (command) {
+  case 'publish': {
+    need(1, '<file> [--slug s] [--title t] [--expires ISO] [--type t]');
+    const content = await fs.readFile(args[0], 'utf8');
+    const out = await apiJson('POST', '/api/artifacts', {
+      content,
+      type: inferType(args[0]),
+      ...(opts.slug && { slug: opts.slug }),
+      ...(opts.title && { title: opts.title }),
+      ...(opts.expires && { expiresAt: opts.expires }),
+    });
+    console.log(out.url);
+    break;
+  }
+
+  case 'deploy': {
+    need(1, '<dir|zip> [--slug s] [--title t] [--expires ISO]');
+    const target = args[0];
+    let zipBuffer;
+    if ((await fs.stat(target)).isDirectory()) {
+      const zip = new AdmZip();
+      zip.addLocalFolder(target);
+      zipBuffer = zip.toBuffer();
+    } else {
+      zipBuffer = await fs.readFile(target);
+    }
+    const params = new URLSearchParams();
+    if (opts.slug) params.set('slug', opts.slug);
+    if (opts.title) params.set('title', opts.title);
+    if (opts.expires) params.set('expiresAt', opts.expires);
+    const qs = params.size ? `?${params}` : '';
+    const out = JSON.parse(await api('POST', `/api/artifacts/zip${qs}`, {
+      body: zipBuffer,
+      contentType: 'application/zip',
+    }));
+    console.log(`${out.url} (${out.files} files)`);
+    break;
+  }
+
+  case 'update': {
+    need(2, '<slug> <file> [--title t] [--type t]');
+    const content = await fs.readFile(args[1], 'utf8');
+    const out = await apiJson('PUT', `/api/artifacts/${args[0]}`, {
+      content,
+      type: inferType(args[1]),
+      ...(opts.title && { title: opts.title }),
+    });
+    console.log(out.url);
+    break;
+  }
+
+  case 'list': {
+    const artifacts = await apiJson('GET', '/api/artifacts');
+    for (const a of artifacts) {
+      const flags = [a.disabled && 'disabled', a.expiresAt && `expires ${a.expiresAt}`].filter(Boolean);
+      console.log(`${a.slug}\t${a.type}\t${a.title || ''}${flags.length ? `\t[${flags.join(', ')}]` : ''}`);
+    }
+    break;
+  }
+
+  case 'rename': {
+    need(2, '<slug> <new-slug>');
+    const out = await apiJson('PATCH', `/api/artifacts/${args[0]}`, { slug: args[1] });
+    console.log(out.url);
+    break;
+  }
+
+  case 'disable':
+  case 'enable': {
+    need(1, '<slug>');
+    await apiJson('PATCH', `/api/artifacts/${args[0]}`, { disabled: command === 'disable' });
+    console.log(`${args[0]} ${command}d`);
+    break;
+  }
+
+  case 'expire': {
+    need(2, '<slug> <ISO-date|never>');
+    const expiresAt = args[1] === 'never' ? null : args[1];
+    await apiJson('PATCH', `/api/artifacts/${args[0]}`, { expiresAt });
+    console.log(expiresAt ? `${args[0]} expires ${expiresAt}` : `${args[0]} expiry cleared`);
+    break;
+  }
+
+  case 'delete': {
+    need(1, '<slug>');
+    await apiJson('DELETE', `/api/artifacts/${args[0]}`);
+    console.log(`${args[0]} deleted`);
+    break;
+  }
+
+  case 'source': {
+    need(1, '<slug> [-o file]');
+    const text = await api('GET', `/a/${args[0]}/source`, { auth: false });
+    if (opts.output) {
+      await fs.writeFile(opts.output, text);
+      console.log(opts.output);
+    } else {
+      process.stdout.write(text);
+    }
+    break;
+  }
+
+  default:
+    fail(`unknown command "${command}"\n\n${USAGE}`);
+}

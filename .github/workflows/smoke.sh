@@ -65,4 +65,28 @@ curl -sf -X DELETE "$BASE/api/artifacts/ci-zip" -H "$AUTH" > /dev/null
 code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/a/ci-smoke-2")
 expect_code 404 "$code" "deleted artifact"
 
+# CLI round-trip (cli.js lives next to this checkout; skipped when deps absent,
+# e.g. the container-smoke job which doesn't run npm ci)
+CLI_DIR=$(cd "$(dirname "$0")/../.." && pwd)
+if [ ! -d "$CLI_DIR/node_modules" ]; then
+  echo "skip: cli smoke (no node_modules)"
+  echo "all smoke tests passed"
+  exit 0
+fi
+export ARTIFACTS_URL=$BASE ARTIFACTS_API_KEY=$KEY
+echo '<h1>cli smoke</h1>' > "$ZIPDIR/cli.html"
+url=$(node "$CLI_DIR/cli.js" publish "$ZIPDIR/cli.html" --slug ci-cli)
+[ "$url" = "$BASE/a/ci-cli" ] || fail "cli publish: unexpected url $url"
+echo "ok: cli publish"
+node "$CLI_DIR/cli.js" rename ci-cli ci-cli-2 > /dev/null
+code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/a/ci-cli-2")
+expect_code 200 "$code" "cli rename"
+node "$CLI_DIR/cli.js" deploy "$ZIPDIR/site" --slug ci-cli-zip > /dev/null
+code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/a/ci-cli-zip/css/s.css")
+expect_code 200 "$code" "cli zip deploy"
+node "$CLI_DIR/cli.js" delete ci-cli-2 > /dev/null
+node "$CLI_DIR/cli.js" delete ci-cli-zip > /dev/null
+code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/a/ci-cli-2")
+expect_code 404 "$code" "cli delete"
+
 echo "all smoke tests passed"
