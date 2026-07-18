@@ -6,6 +6,13 @@ How to run artifacts on your own infrastructure. ([← back to README](../README
 
 ```bash
 git clone https://github.com/kuyazee/artifacts && cd artifacts
+cp .env.example .env   # set ARTIFACTS_API_KEY and BASE_URL
+docker compose up -d
+```
+
+Compose reads `.env` from the project directory. You can also pass the variables inline instead:
+
+```bash
 ARTIFACTS_API_KEY=$(openssl rand -hex 32) BASE_URL=https://artifacts.example.com docker compose up -d
 ```
 
@@ -24,6 +31,8 @@ docker run -d -p 3000:3000 -v artifacts-data:/data \
 npm ci
 ARTIFACTS_API_KEY=$(openssl rand -hex 32) BASE_URL=https://artifacts.example.com node server.js
 ```
+
+Or keep the configuration in a file: `cp .env.example .env`, edit it, then `npm run dev` (uses Node's built-in `--env-file`).
 
 ## Configuration
 
