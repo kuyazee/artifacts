@@ -139,14 +139,22 @@ function buildMdHtml(source, title) {
 }
 
 // Parent "frame" page: a slim toolbar with the artifact loaded in an iframe.
+// Function replacements avoid `$`-substitution in the escaped values.
 function buildFrameHtml(meta, rawUrl) {
+  const title = escapeHtml(meta.title || meta.slug);
+  const url = escapeHtml(rawUrl);
   return FRAME_SHELL
-    .replaceAll('{{TITLE}}', escapeHtml(meta.title || meta.slug))
-    .replaceAll('{{RAW_URL}}', escapeHtml(rawUrl));
+    .replaceAll('{{TITLE}}', () => title)
+    .replaceAll('{{RAW_URL}}', () => url);
 }
 
 function escapeHtml(s) {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 class ApiError extends Error {
@@ -473,8 +481,11 @@ app.get('/a/:slug', async (req, res) => {
     'Cache-Control': 'no-cache',
   });
   if (meta.type === 'zip') {
-    // Trailing slash so relative asset URLs resolve inside the site.
-    if (!req.path.endsWith('/')) return res.redirect(301, `/a/${slug}/`);
+    // Trailing slash so relative asset URLs resolve inside the site; keep ?raw=1
+    // so a slash-less raw URL doesn't bounce back into the frame.
+    if (!req.path.endsWith('/')) {
+      return res.redirect(301, `/a/${slug}/${wantsRaw ? '?raw=1' : ''}`);
+    }
     return res.sendFile(path.join(artifactDir(slug), 'site', 'index.html'));
   }
   res.sendFile(path.join(artifactDir(slug), 'index.html'));

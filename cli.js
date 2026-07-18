@@ -99,7 +99,10 @@ function parseBool(value, name) {
 
 switch (command) {
   case 'publish': {
-    need(1, '<file> [--slug s] [--title t] [--expires ISO] [--type t]');
+    need(1, '<file> [--slug s] [--title t] [--expires ISO] [--type t] [--frame on|off]');
+    if (opts.frame !== undefined && !['on', 'off', 'default'].includes(opts.frame)) {
+      fail('--frame must be on, off, or default');
+    }
     const content = await fs.readFile(args[0], 'utf8');
     const out = await apiJson('POST', '/api/artifacts', {
       content,
@@ -177,7 +180,7 @@ switch (command) {
   case 'frame': {
     need(2, '<slug> <on|off|default>');
     const map = { on: true, off: false, default: null };
-    if (!(args[1] in map)) fail('frame value must be on, off, or default');
+    if (!Object.hasOwn(map, args[1])) fail('frame value must be on, off, or default');
     await apiJson('PATCH', `/api/artifacts/${args[0]}`, { frame: map[args[1]] });
     console.log(`${args[0]} frame ${args[1]}`);
     break;
