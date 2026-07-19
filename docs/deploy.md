@@ -56,6 +56,12 @@ wiped and artifacts are lost. Set `STORAGE_BACKEND=s3` to store them in a durabl
 S3-compatible bucket instead; the app then holds no local state and artifacts survive any
 restart.
 
+The global viewer-frame config (`GET`/`PUT /api/config`) is stored through the same backend, so
+it is as durable as your artifacts. It is loaded once at boot and cached in memory; a running
+process picks up its own `PUT /api/config` immediately, but if you run **multiple replicas**
+against a shared backend, other replicas apply a runtime config change only after they restart.
+Set the frame defaults with `FRAME_ENABLED`/`FRAME_DEFAULT` env vars for a fleet-wide default.
+
 ### S3 (and S3-compatible: R2, B2, MinIO, Spaces, Wasabi, GCS interop)
 
 ```bash

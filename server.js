@@ -143,16 +143,18 @@ function buildJsxHtml(source, title) {
     .replace(/export\s+default\s+/, 'const __ArtifactDefault = ')
     .replaceAll('</script', '<\\/script');
 
+  // Function replacements avoid `$`-substitution ($&, $`, $$, …) in the injected values —
+  // a title or source containing those must be spliced verbatim, not interpreted.
   return JSX_SHELL
-    .replace('{{TITLE}}', escapeHtml(title))
-    .replace('{{IMPORT_MAP}}', JSON.stringify({ imports }, null, 2))
-    .replace('{{SOURCE}}', rewritten);
+    .replace('{{TITLE}}', () => escapeHtml(title))
+    .replace('{{IMPORT_MAP}}', () => JSON.stringify({ imports }, null, 2))
+    .replace('{{SOURCE}}', () => rewritten);
 }
 
 function buildMdHtml(source, title) {
   return MD_SHELL
-    .replace('{{TITLE}}', escapeHtml(title))
-    .replace('{{CONTENT}}', marked.parse(source));
+    .replace('{{TITLE}}', () => escapeHtml(title))
+    .replace('{{CONTENT}}', () => marked.parse(source));
 }
 
 // Parent "frame" page: a slim toolbar with the artifact loaded in an iframe.
