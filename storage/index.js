@@ -58,8 +58,8 @@ const BACKENDS = {
   local: () => import('./local.js'),
   s3: () => import('./s3.js'),
   git: () => import('./git.js'),
-  // postgres, sqlite are added in a later phase; each is loaded on demand so a backend's
-  // dependency is only required when that backend is selected.
+  postgres: () => import('./postgres.js'),
+  sqlite: () => import('./sqlite.js'),
 };
 
 // Instantiate the configured backend and run its boot check (fail-fast, like the

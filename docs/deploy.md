@@ -40,7 +40,7 @@ Or keep the configuration in a file: `cp .env.example .env`, edit it, then `npm 
 |---|---|---|---|
 | `ARTIFACTS_API_KEY` | yes | — | Bearer token for all writes and the MCP endpoint |
 | `BASE_URL` | recommended | `http://localhost:3000` | Public origin used in returned URLs |
-| `STORAGE_BACKEND` | no | `local` | Where artifacts are stored: `local` or `s3` |
+| `STORAGE_BACKEND` | no | `local` | Storage backend: `local`, `s3`, `git`, `postgres`, or `sqlite` |
 | `DATA_DIR` | no | `/data` | `local` backend only — directory of plain files |
 | `PORT` | no | `3000` | Listen port |
 
@@ -126,6 +126,46 @@ JavaScript (no `git` binary, no shell), so a slug or filename can never be run a
 > - Credentials come only from `GIT_TOKEN` / `GIT_USERNAME` / `GIT_PASSWORD` and are scrubbed
 >   from error logs; a `GIT_REMOTE_URL` containing `user:pass@` is rejected at startup.
 > - Binary assets in zip sites accumulate in git history; use a dedicated repo you can prune.
+
+### Postgres
+
+Stores each object as a row (blobs in a `bytea` column). Handy where you already run
+Postgres — Railway, Render, Fly, Supabase, Neon all offer it in a click — and, being an
+external server, it survives a fresh container with no local disk.
+
+```bash
+STORAGE_BACKEND=postgres \
+DATABASE_URL=postgres://user:pass@host:5432/artifacts \
+ARTIFACTS_API_KEY=$(openssl rand -hex 32) \
+node server.js
+```
+
+| Env var | Required | Default | Purpose |
+|---|---|---|---|
+| `DATABASE_URL` | yes | — | Postgres connection string |
+| `PGSSLMODE` | no | (TLS on) | Set `disable` for a local/non-TLS server |
+| `PG_POOL_MAX` | no | `8` | Max pooled connections |
+
+The `pg` dependency is optional and loaded only when `STORAGE_BACKEND=postgres`. The table is
+created automatically on first boot; a failed connection refuses to start.
+
+### SQLite
+
+Stores everything in a single SQLite file with transactional writes — a nice portable option.
+
+```bash
+STORAGE_BACKEND=sqlite SQLITE_PATH=/data/artifacts.db \
+ARTIFACTS_API_KEY=$(openssl rand -hex 32) node server.js
+```
+
+| Env var | Required | Default | Purpose |
+|---|---|---|---|
+| `SQLITE_PATH` | no | `${DATA_DIR}/artifacts.db` | Database file |
+
+Uses Node's built-in `node:sqlite` — **no extra dependency**. Note that, like `local`, an
+SQLite file is only as durable as the disk it sits on: it does **not** by itself survive a host
+that wipes local storage on restart (use s3 / git / postgres for that, or replicate the file
+with e.g. [Litestream](https://litestream.io)).
 
 ### Migrating local → S3
 

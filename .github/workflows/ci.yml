@@ -133,9 +133,74 @@ jobs:
           [ "$code" = "200" ] || { echo "FAIL: artifact did not survive restart (got $code)"; exit 1; }
           echo "ok: artifact rehydrated from the git remote after a fresh restart"
 
+  smoke-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: pw
+          POSTGRES_DB: artifacts
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      ARTIFACTS_API_KEY: ci-test-key
+      PORT: 3000
+      STORAGE_BACKEND: postgres
+      DATABASE_URL: postgres://postgres:pw@127.0.0.1:5432/artifacts
+      PGSSLMODE: disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Boot server (postgres backend)
+        run: |
+          node server.js &
+          echo $! > server.pid
+          for i in $(seq 1 20); do curl -sf http://localhost:3000/healthz && break; sleep 0.5; done
+      - name: Smoke test API against postgres
+        run: bash .github/workflows/smoke.sh http://localhost:3000 ci-test-key
+      - name: Artifacts survive a fresh restart (external DB)
+        run: |
+          curl -sf -X POST http://localhost:3000/api/artifacts \
+            -H 'Authorization: Bearer ci-test-key' -H 'Content-Type: application/json' \
+            -d '{"content":"<h1>durable</h1>","slug":"restart-proof"}'
+          kill "$(cat server.pid)"; sleep 1
+          node server.js &
+          for i in $(seq 1 20); do curl -sf http://localhost:3000/healthz && break; sleep 0.5; done
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/a/restart-proof)
+          [ "$code" = "200" ] || { echo "FAIL: artifact did not survive restart (got $code)"; exit 1; }
+          echo "ok: artifact survived a fresh restart via postgres"
+
+  smoke-sqlite:
+    runs-on: ubuntu-latest
+    env:
+      ARTIFACTS_API_KEY: ci-test-key
+      PORT: 3000
+      STORAGE_BACKEND: sqlite
+      SQLITE_PATH: /tmp/artifacts.db
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Boot server (sqlite backend)
+        run: |
+          node server.js &
+          for i in $(seq 1 20); do curl -sf http://localhost:3000/healthz && break; sleep 0.5; done
+      - name: Smoke test API against sqlite
+        run: bash .github/workflows/smoke.sh http://localhost:3000 ci-test-key
+
   docker:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [smoke, smoke-s3, smoke-git]
+    needs: [smoke, smoke-s3, smoke-git, smoke-postgres, smoke-sqlite]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

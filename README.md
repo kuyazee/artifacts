@@ -29,7 +29,7 @@
 
 AI assistants generate a lot of shareable output — dashboards, prototypes, reports, small apps. Claude's hosted artifacts work well, but the URLs live on someone else's infrastructure. This is the ~600-line self-hosted version: you POST content, it serves the rendered result at an unguessable URL on a domain you control.
 
-It runs as one container with no database and no accounts. Each artifact is a directory of plain files under `/data` — back up that directory and you have backed up everything. Need durability on a host that wipes local disk on restart? Point it at any S3-compatible bucket with `STORAGE_BACKEND=s3` (see [deploying](docs/deploy.md#storage-backends)).
+It runs as one container with no accounts and, by default, no database — each artifact is just a directory of plain files under `/data`, so backing up that directory backs up everything. On hosts that wipe local disk on restart, point it instead at durable external storage — an S3-compatible bucket, a git remote, or Postgres — by setting `STORAGE_BACKEND` (see [deploying](docs/deploy.md#storage-backends)).
 
 ## Features
 
@@ -103,5 +103,5 @@ Uploaded HTML executes — that's the product — so host it on a dedicated subd
 [MIT](LICENSE) © 2026 Zonily Jame
 
 <p align="center">
-  <sub>One container, no database. Artifacts are plain files.</sub>
+  <sub>One container. Plain files by default; pluggable S3 / git / Postgres / SQLite storage.</sub>
 </p>

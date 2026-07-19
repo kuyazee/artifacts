@@ -39,6 +39,7 @@
   },
   "optionalDependencies": {
     "aws4fetch": "1.0.20",
-    "isomorphic-git": "1.38.7"
+    "isomorphic-git": "1.38.7",
+    "pg": "8.22.0"
   }
 }
