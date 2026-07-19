@@ -33,3 +33,13 @@ Note: rendering uses esm.sh + Tailwind CDN, so artifacts need internet to render
 ## Zip sites
 
 A zipped static project (HTML + CSS + JS + images) served under `/a/{slug}/`. Upload via the web UI (drop a `.zip`), the [CLI](cli.md) (`artifacts deploy ./dir`), or the [zip endpoint](api.md#zip-sites-multi-file-static-projects) — validation rules and limits are documented there.
+
+### Static framework builds (Astro, Vite, etc.)
+
+Output from static site generators drops straight into the zip endpoint — an Astro `astro build` (or Vite/Eleventy/etc.) `dist/` folder is just HTML + CSS + JS. The one thing to watch: because sites are served under the `/a/{slug}/` **subpath**, a build that emits **root-absolute** asset URLs (`/_astro/app.css`, `/assets/index.js`) will 404 — those resolve to the domain root, not the artifact. Build with the framework's base/subpath option set to `/a/{slug}/`:
+
+- **Astro** — `base: '/a/{slug}/'` in `astro.config.mjs`
+- **Vite** — `base: '/a/{slug}/'` in `vite.config.js`
+- **Next.js** (`next export`) — `basePath` + `assetPrefix` of `/a/{slug}/`
+
+The slug you build for must match the slug you deploy to. See [`examples/astro-demo`](../examples/astro-demo) for a working Astro project.
