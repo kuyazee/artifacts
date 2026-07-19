@@ -146,6 +146,8 @@
     color: var(--cream); cursor: pointer; text-align: left;
   }
   .group-head:hover { color: var(--cream-hi); }
+  .group-head.static { cursor: default; }
+  .group-head.static:hover { color: var(--cream); }
   .group-head .caret { color: var(--taupe); font-size: 10px; transition: transform .15s; }
   .group.collapsed .group-head .caret { transform: rotate(-90deg); }
   .group-name { font-size: 13px; font-weight: 700; letter-spacing: .01em; }
@@ -530,11 +532,25 @@
   const collapsed = new Set();
   let inlineN = 8; // how many row actions stay inline before overflowing into ⋯
 
-  // Fit as many actions inline as the list width allows; the rest go to a menu.
+  // Worst-case rendered widths (px) per action, in priority order:
+  // Copy, frame, Tags, Project, Rename, Disable, expiry(dated), Delete.
+  const ACT_W = [58, 96, 56, 74, 76, 74, 130, 66];
+
+  // Greedily fit actions inline against the list width using their real widths
+  // (the dated "expires …" and "frame: auto" labels are wide), reserving room
+  // for the ⋯ button; the rest overflow into the menu.
   function computeInlineCount() {
     const w = $('rows').clientWidth || 860;
-    const avail = Math.max(0, w - 250); // reserve for slug / title / meta
-    return Math.max(1, Math.min(8, Math.floor(avail / 74)));
+    const budget = Math.max(0, w - 200); // reserve for slug / title / meta
+    const GAP = 6, MORE = 46;
+    let sum = 0;
+    for (const bw of ACT_W) sum += bw + GAP;
+    if (sum <= budget) return ACT_W.length; // everything fits, no menu
+    let used = MORE, n = 0;
+    for (const bw of ACT_W) {
+      if (used + bw + GAP <= budget) { used += bw + GAP; n++; } else break;
+    }
+    return Math.max(1, n);
   }
 
   async function loadList() {
@@ -583,6 +599,9 @@
 
   function renderList() {
     inlineN = computeInlineCount();
+    // drop collapse state for projects that no longer exist (renamed / cleared)
+    const live = new Set(allItems.map((a) => a.project || ''));
+    for (const k of collapsed) if (!live.has(k)) collapsed.delete(k);
     const q = ($('search').value || '').trim().toLowerCase();
     const filtered = q ? allItems.filter((a) => matchItem(a, q)) : allItems;
 
@@ -621,20 +640,28 @@
   function buildGroup(key, items, searching) {
     const sec = document.createElement('section');
     sec.className = 'group' + (!searching && collapsed.has(key) ? ' collapsed' : '');
-    const head = document.createElement('button');
-    head.className = 'group-head';
-    const caret = document.createElement('span');
-    caret.className = 'caret'; caret.textContent = '▾';
+    // While searching, groups are force-expanded, so the header is a static
+    // label (no caret / no toggle) rather than a control that does nothing.
+    const head = document.createElement(searching ? 'div' : 'button');
+    head.className = 'group-head' + (searching ? ' static' : '');
+    if (!searching) {
+      const caret = document.createElement('span');
+      caret.className = 'caret'; caret.textContent = '▾';
+      head.appendChild(caret);
+    }
     const name = document.createElement('span');
     name.className = 'group-name' + (key ? '' : ' muted');
     name.textContent = key || 'No project';
     const count = document.createElement('span');
     count.className = 'group-count'; count.textContent = items.length;
-    head.append(caret, name, count);
-    head.addEventListener('click', () => {
-      if (collapsed.has(key)) collapsed.delete(key); else collapsed.add(key);
-      renderList();
-    });
+    head.append(name, count);
+    if (!searching) {
+      head.setAttribute('aria-expanded', collapsed.has(key) ? 'false' : 'true');
+      head.addEventListener('click', () => {
+        if (collapsed.has(key)) collapsed.delete(key); else collapsed.add(key);
+        renderList();
+      });
+    }
     const box = document.createElement('div');
     box.className = 'group-items';
     for (const a of items) box.appendChild(buildItem(a));
@@ -693,8 +720,9 @@
 
       const copy = actBtn('Copy', 'copy');
       copy.addEventListener('click', () => {
-        navigator.clipboard.writeText(location.origin + '/a/' + a.slug);
-        flash(copy, 'Copied');
+        navigator.clipboard.writeText(location.origin + '/a/' + a.slug)
+          .then(() => flash(copy, 'Copied'))
+          .catch(() => flash(copy, 'Copy failed'));
       });
 
       const ren = actBtn('Rename', 'ren');
@@ -791,6 +819,7 @@
       more.className = 'more';
       const moreBtn = actBtn('⋯', 'more-btn');
       moreBtn.setAttribute('aria-haspopup', 'true');
+      moreBtn.setAttribute('aria-expanded', 'false');
       moreBtn.title = 'More actions';
       const menu = document.createElement('div');
       menu.className = 'menu';
@@ -813,15 +842,22 @@
 
   $('search').addEventListener('input', renderList);
 
-  // close any open ⋯ menu on outside click
+  function closeMenu(m) {
+    m.classList.remove('open');
+    const acts = m.closest('.item-actions');
+    if (acts) acts.classList.remove('menu-open');
+    const btn = m.querySelector('.more-btn');
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+  }
+
+  // close any open ⋯ menu on outside click or Escape
   document.addEventListener('click', (e) => {
     document.querySelectorAll('.more.open').forEach((m) => {
-      if (!m.contains(e.target)) {
-        m.classList.remove('open');
-        const acts = m.closest('.item-actions');
-        if (acts) acts.classList.remove('menu-open');
-      }
+      if (!m.contains(e.target)) closeMenu(m);
     });
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') document.querySelectorAll('.more.open').forEach(closeMenu);
   });
 
   // re-flow inline vs overflow actions when the width crosses a threshold

@@ -114,8 +114,8 @@ switch (command) {
       type: inferType(args[0]),
       ...(opts.slug && { slug: opts.slug }),
       ...(opts.title && { title: opts.title }),
-      ...(opts.tags && { tags: opts.tags }),
-      ...(opts.project && { project: opts.project }),
+      ...(opts.tags !== undefined && { tags: opts.tags }),
+      ...(opts.project !== undefined && { project: opts.project }),
       ...(opts.expires && { expiresAt: opts.expires }),
       ...(opts.frame && opts.frame !== 'default' && { frame: opts.frame === 'on' }),
     });
@@ -156,8 +156,8 @@ switch (command) {
       content,
       type: inferType(args[1]),
       ...(opts.title && { title: opts.title }),
-      ...(opts.tags && { tags: opts.tags }),
-      ...(opts.project && { project: opts.project }),
+      ...(opts.tags !== undefined && { tags: opts.tags }),
+      ...(opts.project !== undefined && { project: opts.project }),
     });
     console.log(out.url);
     break;

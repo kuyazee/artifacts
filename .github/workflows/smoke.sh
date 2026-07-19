@@ -106,6 +106,19 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/artifacts" -H "
   -d '{"content":"<h1>x</h1>","type":"html","project":"bad/name"}')
 expect_code 400 "$code" "invalid project rejected"
 
+# internal whitespace collapsed -> single-space name matches
+curl -sf -X POST "$BASE/api/artifacts" -H "$AUTH" -H "$JSON" \
+  -d '{"content":"<h1>w</h1>","type":"html","slug":"ci-proj-ws","project":"Acme  Redesign"}' > /dev/null
+curl -s "$BASE/api/artifacts?project=Acme%20Redesign" -H "$AUTH" | grep -q '"ci-proj-ws"' || fail "project whitespace not collapsed"
+echo "ok: project whitespace collapsed"
+curl -sf -X DELETE "$BASE/api/artifacts/ci-proj-ws" -H "$AUTH" > /dev/null
+
+# non-ASCII project accepted
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/artifacts" -H "$AUTH" -H "$JSON" \
+  -d '{"content":"<h1>u</h1>","type":"html","slug":"ci-proj-uni","project":"Café"}')
+expect_code 201 "$code" "unicode project accepted"
+curl -sf -X DELETE "$BASE/api/artifacts/ci-proj-uni" -H "$AUTH" > /dev/null
+
 # ?project= filter includes matches and excludes non-matches
 curl -s "$BASE/api/artifacts?project=Acme%20Redesign" -H "$AUTH" | grep -q '"ci-proj"' || fail "project filter missed match"
 if curl -s "$BASE/api/artifacts?project=Nope" -H "$AUTH" | grep -q '"ci-proj"'; then fail "project filter false positive"; fi

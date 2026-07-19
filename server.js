@@ -100,8 +100,9 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{2,63}$/;
 const TAG_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const MAX_TAGS = 10;
 // A project is a single grouping label (one per artifact). Friendlier than a
-// slug — letters, digits, spaces, dashes, underscores — but bounded.
-const PROJECT_RE = /^[A-Za-z0-9][\w .-]{0,63}$/;
+// slug — Unicode letters/digits, spaces, and - _ . — but bounded, and must
+// start with a letter or digit. Internal whitespace is collapsed on input.
+const PROJECT_RE = /^[\p{L}\p{N}][\p{L}\p{N}\p{M} ._-]{0,63}$/u;
 const SOURCE_EXT = { html: 'html', jsx: 'jsx', tsx: 'tsx', md: 'md' };
 
 // Pinned versions shared with the jsx shell. `external=react` keeps packages on
@@ -319,10 +320,13 @@ function parseProject(value) {
   if (typeof value !== 'string') {
     throw new ApiError(400, 'project must be a string');
   }
-  const project = value.trim();
+  const project = value.trim().replace(/\s+/g, ' '); // collapse internal whitespace
   if (!project) return '';
   if (!PROJECT_RE.test(project)) {
-    throw new ApiError(400, 'project must match [A-Za-z0-9][\\w .-]{0,63} (letters, digits, spaces, - _ .)');
+    throw new ApiError(
+      400,
+      'project must be 1–64 chars of letters, digits, spaces, and - _ . (starting with a letter or digit)',
+    );
   }
   return project;
 }
@@ -653,8 +657,8 @@ app.get('/api/artifacts', requireAuth, async (req, res, next) => {
   try {
     const { tag, project } = req.query;
     const opts = {};
-    if (typeof tag === 'string') opts.tag = tag;
-    if (typeof project === 'string') opts.project = project;
+    if (typeof tag === 'string' && tag !== '') opts.tag = tag;
+    if (typeof project === 'string' && project !== '') opts.project = project;
     res.json(await listArtifacts(opts));
   } catch (err) {
     next(err);
@@ -880,8 +884,8 @@ function createMcpServer() {
     },
     async ({ tag, project }) => {
       const opts = {};
-      if (tag !== undefined) opts.tag = tag;
-      if (project !== undefined) opts.project = project;
+      if (tag) opts.tag = tag;
+      if (project) opts.project = project;
       const items = await listArtifacts(opts);
       return { content: [{ type: 'text', text: JSON.stringify(items, null, 2) }] };
     },
