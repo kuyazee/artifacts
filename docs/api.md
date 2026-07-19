@@ -5,13 +5,16 @@ Full HTTP reference, including zip-site deploys. ([← back to README](../README
 All `/api/*` and `/mcp` calls need `Authorization: Bearer $ARTIFACTS_API_KEY`. Reads under `/a/` are public.
 
 ```
-POST   /api/artifacts        {content, type: html|jsx|tsx|md, slug?, title?, tags?, expiresAt?} → 201 {slug, url}
-POST   /api/artifacts/zip    raw zip body (?slug=&title=&tags=&expiresAt=)   → 201 {slug, url, files}
-PUT    /api/artifacts/:slug  {content, type, title?, tags?, expiresAt?}      → {slug, url}
-PATCH  /api/artifacts/:slug  {slug?, disabled?, expiresAt?, tags?}           → {slug, url}   (rename / disable / expiry / tags)
+POST   /api/artifacts        {content, type: html|jsx|tsx|md, slug?, title?, tags?, project?, expiresAt?, frame?} → 201 {slug, url}
+POST   /api/artifacts/zip    raw zip body (?slug=&title=&tags=&project=&expiresAt=) → 201 {slug, url, files}
+PUT    /api/artifacts/:slug  {content, type, title?, tags?, project?, expiresAt?, frame?} → {slug, url}
+PATCH  /api/artifacts/:slug  {slug?, disabled?, expiresAt?, tags?, project?, frame?} → {slug, url}   (rename / disable / expiry / tags / project / frame)
 DELETE /api/artifacts/:slug                                                  → {deleted}
-GET    /api/artifacts        list (?tag= to filter)                          → [{slug, type, title, tags, createdAt, updatedAt}]
-GET    /a/:slug              rendered artifact (public)
+GET    /api/artifacts        list (?tag= and/or ?project= to filter)         → [{slug, type, title, tags, project?, frame?, createdAt, updatedAt}]
+GET    /api/config           {frame: {enabled, default}}                     → global frame config
+PUT    /api/config           {frame: {enabled?, default?}}                   → updated config
+GET    /a/:slug              rendered artifact, framed when active (public)
+GET    /a/:slug?raw=1        bare artifact without the frame (public)
 GET    /a/:slug/source       original uploaded source, text/plain (public)
 ```
 
@@ -21,6 +24,18 @@ Semantics:
 - `POST` with an existing slug → `409` (use `PUT` to update).
 - Disabled artifacts return `404`; expired ones (`expiresAt` in the past) return `410`. Both keep their content — re-enable or clear/extend the expiry to serve again.
 - Tags: an array of strings, or one comma-separated string (the only form the zip endpoint's `?tags=` accepts). Each tag must match `[a-z0-9][a-z0-9-]{0,31}`; max 10 per artifact. Input is lowercased and deduplicated. `PATCH` replaces the whole list; an empty list clears it. `PUT` without `tags` keeps the existing ones. Artifacts published before tags existed list as `"tags": []`. In the web UI, tags render as chips — click one to filter the list.
+- Project: a single grouping label (one per artifact), distinct from tags. Unicode letters/digits, spaces, and `-` `_` `.`, starting with a letter or digit, max 64 chars; internal whitespace is collapsed and case is preserved. Matching (`?project=` and UI grouping) is **exact and case-sensitive** — `Acme` and `acme` are different projects. `PATCH` sets it; an empty string clears it. `PUT` without `project` keeps the existing one. `GET /api/artifacts?project=<name>` returns only that project's artifacts (an empty `?project=` is ignored, not a filter for "no project"). The web UI groups the list into collapsible sections per project (with a search box across project / title / slug / tags).
+
+## Viewer frame
+
+`GET /a/:slug` can wrap the artifact in a slim top frame (title + copy-link + hide toggle) that loads the artifact in an iframe. `?raw=1` always returns the bare artifact — it's the URL the frame's iframe points at, and the escape hatch for embedding.
+
+Whether an artifact is framed resolves as `config.frame.enabled && (meta.frame ?? config.frame.default)`:
+
+- **`GET/PUT /api/config`** manage the global `{frame: {enabled, default}}` (both booleans). `enabled` is the master switch; `default` applies to items with no per-item value. `PUT` accepts a partial `frame` object and merges it. First boot seeds the config from the optional `FRAME_ENABLED` / `FRAME_DEFAULT` env vars (both default `true`), persisting it to `DATA_DIR/config.json`.
+- **Per item**, the `frame` field on `POST` / `PUT` / `PATCH` is `true` (always framed), `false` (never framed), or — via `PATCH {"frame": null}` — cleared so the item inherits the global default.
+
+When the frame is globally disabled or off for an item, `/a/:slug` serves the artifact exactly as `?raw=1` does.
 
 Publish a file:
 

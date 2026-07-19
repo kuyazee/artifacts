@@ -33,3 +33,7 @@ Note: rendering uses esm.sh + Tailwind CDN, so artifacts need internet to render
 ## Zip sites
 
 A zipped static project (HTML + CSS + JS + images) served under `/a/{slug}/`. Upload via the web UI (drop a `.zip`), the [CLI](cli.md) (`artifacts deploy ./dir`), or the [zip endpoint](api.md#zip-sites-multi-file-static-projects) — validation rules and limits are documented there.
+
+## Viewer frame
+
+Any of the above can render inside a slim top **frame** — a toolbar with the title, a copy-link button, and a hide toggle — with the artifact itself isolated in an iframe. Toggle it globally from the web UI's **Settings** panel (or `artifacts config`), and override it per artifact (`artifacts frame <slug> on|off|default`). Append `?raw=1` to any URL to view the artifact with no frame. Full behavior in [docs/api.md](api.md#viewer-frame).

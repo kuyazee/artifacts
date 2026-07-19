@@ -28,13 +28,81 @@ await fs.mkdir(ARTIFACTS_DIR, { recursive: true });
 
 const nanoid = customAlphabet('abcdefghijklmnopqrstuvwxyz0123456789', 10);
 
+// ---------------------------------------------------------------------------
+// Server config (DATA_DIR/config.json) — global frame settings
+// ---------------------------------------------------------------------------
+
+const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
+
+function boolEnv(name) {
+  const v = process.env[name];
+  if (v === undefined) return undefined;
+  return v === '1' || v.toLowerCase() === 'true';
+}
+
+const DEFAULT_CONFIG = {
+  frame: {
+    enabled: boolEnv('FRAME_ENABLED') ?? true,
+    default: boolEnv('FRAME_DEFAULT') ?? true,
+  },
+};
+
+function normalizeConfig(raw) {
+  const frame = raw?.frame || {};
+  return {
+    frame: {
+      enabled: typeof frame.enabled === 'boolean' ? frame.enabled : DEFAULT_CONFIG.frame.enabled,
+      default: typeof frame.default === 'boolean' ? frame.default : DEFAULT_CONFIG.frame.default,
+    },
+  };
+}
+
+async function loadConfig() {
+  try {
+    return normalizeConfig(JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8')));
+  } catch {
+    await fs.writeFile(CONFIG_PATH, JSON.stringify(DEFAULT_CONFIG, null, 2));
+    return DEFAULT_CONFIG;
+  }
+}
+
+let config = await loadConfig();
+
+async function updateConfig(patch) {
+  const frame = patch?.frame || {};
+  for (const key of ['enabled', 'default']) {
+    if (frame[key] !== undefined && typeof frame[key] !== 'boolean') {
+      throw new ApiError(400, `frame.${key} must be a boolean`);
+    }
+  }
+  config = {
+    frame: {
+      enabled: frame.enabled ?? config.frame.enabled,
+      default: frame.default ?? config.frame.default,
+    },
+  };
+  await fs.writeFile(CONFIG_PATH, JSON.stringify(config, null, 2));
+  return config;
+}
+
+// Whether the viewer frame is shown for this artifact: global master switch
+// AND (per-item override, or the global default when the item has no override).
+function frameActive(meta) {
+  return config.frame.enabled && (typeof meta.frame === 'boolean' ? meta.frame : config.frame.default);
+}
+
 const JSX_SHELL = await fs.readFile(path.join(__dirname, 'shells', 'jsx.html'), 'utf8');
 const MD_SHELL = await fs.readFile(path.join(__dirname, 'shells', 'md.html'), 'utf8');
+const FRAME_SHELL = await fs.readFile(path.join(__dirname, 'shells', 'frame.html'), 'utf8');
 
 const TYPES = ['html', 'jsx', 'tsx', 'md'];
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{2,63}$/;
 const TAG_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const MAX_TAGS = 10;
+// A project is a single grouping label (one per artifact). Friendlier than a
+// slug — Unicode letters/digits, spaces, and - _ . — but bounded, and must
+// start with a letter or digit. Internal whitespace is collapsed on input.
+const PROJECT_RE = /^[\p{L}\p{N}][\p{L}\p{N}\p{M} ._-]{0,63}$/u;
 const SOURCE_EXT = { html: 'html', jsx: 'jsx', tsx: 'tsx', md: 'md' };
 
 // Pinned versions shared with the jsx shell. `external=react` keeps packages on
@@ -76,8 +144,23 @@ function buildMdHtml(source, title) {
     .replace('{{CONTENT}}', marked.parse(source));
 }
 
+// Parent "frame" page: a slim toolbar with the artifact loaded in an iframe.
+// Function replacements avoid `$`-substitution in the escaped values.
+function buildFrameHtml(meta, rawUrl) {
+  const title = escapeHtml(meta.title || meta.slug);
+  const url = escapeHtml(rawUrl);
+  return FRAME_SHELL
+    .replaceAll('{{TITLE}}', () => title)
+    .replaceAll('{{RAW_URL}}', () => url);
+}
+
 function escapeHtml(s) {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 class ApiError extends Error {
@@ -168,12 +251,13 @@ function extractSiteFiles(zip) {
   return files;
 }
 
-async function saveZipArtifact(buffer, { slug, title, expiresAt, tags }) {
+async function saveZipArtifact(buffer, { slug, title, expiresAt, tags, project }) {
   if (slug !== undefined && !SLUG_RE.test(slug)) {
     throw new ApiError(400, 'slug must match [a-z0-9][a-z0-9-]{2,63}');
   }
   const expiry = expiresAt !== undefined ? parseExpiresAt(expiresAt) : undefined;
   const tagList = tags !== undefined ? parseTags(tags) : undefined;
+  const projectName = project !== undefined ? parseProject(project) : undefined;
 
   let zip;
   try {
@@ -204,6 +288,7 @@ async function saveZipArtifact(buffer, { slug, title, expiresAt, tags }) {
   };
   if (expiry !== undefined) meta.expiresAt = expiry;
   if (tagList?.length) meta.tags = tagList;
+  if (projectName) meta.project = projectName;
   await fs.writeFile(path.join(artifactDir(finalSlug), 'meta.json'), JSON.stringify(meta, null, 2));
   return { slug: finalSlug, url: `${BASE_URL}/a/${finalSlug}/`, files: files.length };
 }
@@ -229,6 +314,23 @@ function parseTags(value) {
   return tags;
 }
 
+// Returns a trimmed project name, or '' to clear it. null/'' both mean clear.
+function parseProject(value) {
+  if (value === null) return '';
+  if (typeof value !== 'string') {
+    throw new ApiError(400, 'project must be a string');
+  }
+  const project = value.trim().replace(/\s+/g, ' '); // collapse internal whitespace
+  if (!project) return '';
+  if (!PROJECT_RE.test(project)) {
+    throw new ApiError(
+      400,
+      'project must be 1–64 chars of letters, digits, spaces, and - _ . (starting with a letter or digit)',
+    );
+  }
+  return project;
+}
+
 function parseExpiresAt(value) {
   if (value === null || value === '') return undefined;
   if (typeof value !== 'string' || Number.isNaN(Date.parse(value))) {
@@ -241,12 +343,16 @@ function isExpired(meta) {
   return Boolean(meta.expiresAt && Date.parse(meta.expiresAt) <= Date.now());
 }
 
-async function saveArtifact({ content, type = 'html', slug, title, expiresAt, tags }, { replace = false } = {}) {
+async function saveArtifact({ content, type = 'html', slug, title, expiresAt, frame, tags, project }, { replace = false } = {}) {
   if (typeof content !== 'string' || !content.trim()) {
     throw new ApiError(400, 'content (non-empty string) is required');
   }
+  if (frame !== undefined && typeof frame !== 'boolean') {
+    throw new ApiError(400, 'frame must be a boolean');
+  }
   const expiry = expiresAt !== undefined ? parseExpiresAt(expiresAt) : undefined;
   const tagList = tags !== undefined ? parseTags(tags) : undefined;
+  const projectName = project !== undefined ? parseProject(project) : undefined;
   if (!TYPES.includes(type)) {
     throw new ApiError(400, `type must be one of: ${TYPES.join(', ')}`);
   }
@@ -284,12 +390,14 @@ async function saveArtifact({ content, type = 'html', slug, title, expiresAt, ta
     updatedAt: new Date().toISOString(),
   };
   if (expiresAt !== undefined) meta.expiresAt = expiry;
+  if (frame !== undefined) meta.frame = frame;
   if (tagList !== undefined) meta.tags = tagList.length ? tagList : undefined;
+  if (projectName !== undefined) meta.project = projectName || undefined;
   await fs.writeFile(path.join(dir, 'meta.json'), JSON.stringify(meta, null, 2));
   return { slug: finalSlug, url: `${BASE_URL}/a/${finalSlug}` };
 }
 
-async function listArtifacts({ tag } = {}) {
+async function listArtifacts({ tag, project } = {}) {
   const entries = await fs.readdir(ARTIFACTS_DIR, { withFileTypes: true });
   const metas = await Promise.all(
     entries.filter((e) => e.isDirectory()).map((e) => readMeta(e.name)),
@@ -301,6 +409,10 @@ async function listArtifacts({ tag } = {}) {
   if (tag !== undefined) {
     const wanted = String(tag).trim().toLowerCase();
     items = items.filter((a) => a.tags.includes(wanted));
+  }
+  if (project !== undefined) {
+    const wanted = String(project).trim();
+    items = items.filter((a) => (a.project || '') === wanted);
   }
   return items;
 }
@@ -331,6 +443,16 @@ async function patchArtifact(slug, patch) {
     meta.disabled = patch.disabled || undefined;
   }
 
+  if (patch.frame !== undefined) {
+    if (patch.frame === null) {
+      delete meta.frame; // reset to inherit the global default
+    } else if (typeof patch.frame === 'boolean') {
+      meta.frame = patch.frame;
+    } else {
+      throw new ApiError(400, 'frame must be a boolean or null');
+    }
+  }
+
   if (patch.expiresAt !== undefined) {
     meta.expiresAt = parseExpiresAt(patch.expiresAt);
   }
@@ -338,6 +460,11 @@ async function patchArtifact(slug, patch) {
   if (patch.tags !== undefined) {
     const tags = parseTags(patch.tags);
     meta.tags = tags.length ? tags : undefined;
+  }
+
+  if (patch.project !== undefined) {
+    const project = parseProject(patch.project);
+    meta.project = project || undefined; // '' clears it
   }
 
   meta.updatedAt = new Date().toISOString();
@@ -385,6 +512,15 @@ const ARTIFACT_CSP = [
   "img-src * data: blob:",
 ].join(' ');
 
+// The frame wrapper is our own page: inline styles/script + a same-origin iframe.
+const FRAME_CSP = [
+  "default-src 'self';",
+  "style-src 'self' 'unsafe-inline';",
+  "script-src 'self' 'unsafe-inline';",
+  "img-src 'self' data:;",
+  "frame-src 'self';",
+].join(' ');
+
 app.get('/a/:slug', async (req, res) => {
   const { slug } = req.params;
   const meta = SLUG_RE.test(slug) ? await readMeta(slug) : null;
@@ -394,6 +530,24 @@ app.get('/a/:slug', async (req, res) => {
   if (isExpired(meta)) {
     return res.status(410).type('text/plain').send('artifact expired');
   }
+
+  // Framed view: serve the wrapper page (toolbar + iframe → ?raw=1). `?raw=1`
+  // is the escape hatch the iframe uses to load the bare artifact.
+  const wantsRaw = req.query.raw !== undefined;
+  if (frameActive(meta) && !wantsRaw) {
+    if (meta.type === 'zip' && !req.path.endsWith('/')) {
+      return res.redirect(301, `/a/${slug}/`);
+    }
+    const rawUrl = meta.type === 'zip' ? `/a/${slug}/?raw=1` : `/a/${slug}?raw=1`;
+    res.set({
+      'Content-Security-Policy': FRAME_CSP,
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer',
+      'Cache-Control': 'no-cache',
+    });
+    return res.type('html').send(buildFrameHtml(meta, rawUrl));
+  }
+
   res.set({
     'Content-Security-Policy': ARTIFACT_CSP,
     'X-Content-Type-Options': 'nosniff',
@@ -401,8 +555,11 @@ app.get('/a/:slug', async (req, res) => {
     'Cache-Control': 'no-cache',
   });
   if (meta.type === 'zip') {
-    // Trailing slash so relative asset URLs resolve inside the site.
-    if (!req.path.endsWith('/')) return res.redirect(301, `/a/${slug}/`);
+    // Trailing slash so relative asset URLs resolve inside the site; keep ?raw=1
+    // so a slash-less raw URL doesn't bounce back into the frame.
+    if (!req.path.endsWith('/')) {
+      return res.redirect(301, `/a/${slug}/${wantsRaw ? '?raw=1' : ''}`);
+    }
     return res.sendFile(path.join(artifactDir(slug), 'site', 'index.html'));
   }
   res.sendFile(path.join(artifactDir(slug), 'index.html'));
@@ -464,8 +621,8 @@ app.post('/api/artifacts/zip', requireAuth, zipBody, async (req, res, next) => {
     if (!Buffer.isBuffer(req.body) || !req.body.length) {
       throw new ApiError(400, 'raw zip body required (Content-Type: application/zip)');
     }
-    const { slug, title, expiresAt, tags } = req.query;
-    res.status(201).json(await saveZipArtifact(req.body, { slug, title, expiresAt, tags }));
+    const { slug, title, expiresAt, tags, project } = req.query;
+    res.status(201).json(await saveZipArtifact(req.body, { slug, title, expiresAt, tags, project }));
   } catch (err) {
     next(err);
   }
@@ -498,8 +655,23 @@ app.delete('/api/artifacts/:slug', requireAuth, async (req, res, next) => {
 
 app.get('/api/artifacts', requireAuth, async (req, res, next) => {
   try {
-    const { tag } = req.query;
-    res.json(await listArtifacts(typeof tag === 'string' ? { tag } : {}));
+    const { tag, project } = req.query;
+    const opts = {};
+    if (typeof tag === 'string' && tag !== '') opts.tag = tag;
+    if (typeof project === 'string' && project !== '') opts.project = project;
+    res.json(await listArtifacts(opts));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/api/config', requireAuth, (req, res) => {
+  res.json(config);
+});
+
+app.put('/api/config', requireAuth, async (req, res, next) => {
+  try {
+    res.json(await updateConfig(req.body));
   } catch (err) {
     next(err);
   }
@@ -527,10 +699,18 @@ function createMcpServer() {
           .string()
           .optional()
           .describe('ISO 8601 datetime after which the URL stops serving (410)'),
+        frame: z
+          .boolean()
+          .optional()
+          .describe('Show the top viewer frame for this artifact, overriding the server default'),
         tags: z
           .array(z.string())
           .optional()
           .describe('Tags for organizing artifacts: [a-z0-9-], 1-32 chars each, max 10'),
+        project: z
+          .string()
+          .optional()
+          .describe('Project this artifact belongs to (single grouping label, max 64 chars)'),
       },
     },
     async (args) => {
@@ -549,10 +729,18 @@ function createMcpServer() {
         content: z.string(),
         type: z.enum(['html', 'jsx', 'tsx', 'md']).default('html'),
         title: z.string().optional(),
+        frame: z
+          .boolean()
+          .optional()
+          .describe('Show the top viewer frame for this artifact, overriding the server default'),
         tags: z
           .array(z.string())
           .optional()
           .describe('Replaces all tags when provided; omit to keep existing tags'),
+        project: z
+          .string()
+          .optional()
+          .describe('Project this artifact belongs to; omit to keep the existing project'),
       },
     },
     async (args) => {
@@ -617,6 +805,24 @@ function createMcpServer() {
   );
 
   server.registerTool(
+    'set_artifact_project',
+    {
+      title: 'Set artifact project',
+      description:
+        'Set or clear the project an artifact belongs to. Projects group artifacts in the web UI. An empty string clears it.',
+      inputSchema: {
+        slug: z.string(),
+        project: z.string().describe('Project name (max 64 chars); empty string clears it'),
+      },
+    },
+    async ({ slug, project }) => {
+      await patchArtifact(slug, { project });
+      const text = project.trim() ? `${slug} → project “${project.trim()}”` : `project cleared for ${slug}`;
+      return { content: [{ type: 'text', text }] };
+    },
+  );
+
+  server.registerTool(
     'disable_artifact',
     {
       title: 'Disable artifact',
@@ -644,17 +850,43 @@ function createMcpServer() {
   );
 
   server.registerTool(
+    'set_artifact_frame',
+    {
+      title: 'Set artifact frame',
+      description:
+        'Control the top viewer frame for an artifact: true = always framed, false = never framed, null = inherit the server default.',
+      inputSchema: {
+        slug: z.string(),
+        frame: z
+          .boolean()
+          .nullable()
+          .describe('true = framed, false = unframed, null = inherit the global default'),
+      },
+    },
+    async ({ slug, frame }) => {
+      await patchArtifact(slug, { frame });
+      const text =
+        frame === null ? `frame reset to default for ${slug}` : `frame ${frame ? 'on' : 'off'} for ${slug}`;
+      return { content: [{ type: 'text', text }] };
+    },
+  );
+
+  server.registerTool(
     'list_artifacts',
     {
       title: 'List artifacts',
       description:
-        'List all published artifacts (slug, type, title, tags, timestamps). Pass tag to only list artifacts carrying that tag.',
+        'List all published artifacts (slug, type, title, tags, project, timestamps). Pass tag and/or project to filter.',
       inputSchema: {
         tag: z.string().optional().describe('Only return artifacts with this tag'),
+        project: z.string().optional().describe('Only return artifacts in this project'),
       },
     },
-    async ({ tag }) => {
-      const items = await listArtifacts(tag !== undefined ? { tag } : {});
+    async ({ tag, project }) => {
+      const opts = {};
+      if (tag) opts.tag = tag;
+      if (project) opts.project = project;
+      const items = await listArtifacts(opts);
       return { content: [{ type: 'text', text: JSON.stringify(items, null, 2) }] };
     },
   );

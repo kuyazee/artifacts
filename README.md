@@ -36,7 +36,9 @@ It runs as one container with no database and no accounts. Each artifact is a di
 - **Four content types.** HTML, JSX/TSX (a single React component, no build step), Markdown, and zipped static sites.
 - **Agent-native, human-friendly.** A built-in MCP server lets Claude Code, Codex, or any MCP client publish with one tool call. Humans get a drag-and-drop web UI at `/` (locked behind the API key) and a [CLI](docs/cli.md).
 - **Private by default.** Unguessable slugs, `noindex` everywhere, bearer-key writes, optional expiry.
-- **Lifecycle controls.** Custom slugs, rename, tags (click a tag in the UI to filter), disable without deleting, auto-expire, delete.
+- **Optional viewer frame.** A slim top toolbar (title, copy link, hide) like Claude/Gemini/ChatGPT artifacts — toggle it globally in Settings or per artifact; `?raw=1` always serves the bare content.
+- **Organize by project.** Group artifacts built for the same project into collapsible sections, with a search box across project / title / slug / tags. Tags stay for cross-cutting labels.
+- **Lifecycle controls.** Custom slugs, rename, tags, disable without deleting, auto-expire, delete.
 
 ## Quick start
 
