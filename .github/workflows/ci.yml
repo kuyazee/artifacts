@@ -33,9 +33,61 @@ jobs:
       - name: Smoke test API
         run: bash .github/workflows/smoke.sh http://localhost:3000 ci-test-key
 
+  smoke-s3:
+    runs-on: ubuntu-latest
+    env:
+      ARTIFACTS_API_KEY: ci-test-key
+      PORT: 3000
+      STORAGE_BACKEND: s3
+      S3_ENDPOINT: http://127.0.0.1:9000
+      S3_REGION: us-east-1
+      S3_BUCKET: artifacts
+      S3_ACCESS_KEY_ID: minioadmin
+      S3_SECRET_ACCESS_KEY: minioadmin
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_EC2_METADATA_DISABLED: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Start MinIO + create bucket
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio server /data
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:9000/minio/health/ready && break
+            sleep 1
+          done
+          aws --endpoint-url http://127.0.0.1:9000 s3 mb s3://artifacts
+      - name: Boot server (s3 backend)
+        run: |
+          node server.js &
+          echo $! > server.pid
+          for i in $(seq 1 20); do curl -sf http://localhost:3000/healthz && break; sleep 0.5; done
+      - name: Smoke test API against S3
+        run: bash .github/workflows/smoke.sh http://localhost:3000 ci-test-key
+      - name: Artifacts survive a fresh restart (no local disk)
+        run: |
+          curl -sf -X POST http://localhost:3000/api/artifacts \
+            -H 'Authorization: Bearer ci-test-key' -H 'Content-Type: application/json' \
+            -d '{"content":"<h1>durable</h1>","slug":"restart-proof"}'
+          # kill the server and start a brand-new process against the same bucket, with
+          # nothing on local disk — proves durability across a container reprovision.
+          kill "$(cat server.pid)"; sleep 1
+          node server.js &
+          for i in $(seq 1 20); do curl -sf http://localhost:3000/healthz && break; sleep 0.5; done
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/a/restart-proof)
+          [ "$code" = "200" ] || { echo "FAIL: artifact did not survive restart (got $code)"; exit 1; }
+          echo "ok: artifact survived a fresh restart via S3"
+
   docker:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: smoke
+    needs: [smoke, smoke-s3]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -36,5 +36,8 @@
     "marked": "^15.0.0",
     "nanoid": "^5.0.9",
     "zod": "^3.24.1"
+  },
+  "optionalDependencies": {
+    "aws4fetch": "1.0.20"
   }
 }

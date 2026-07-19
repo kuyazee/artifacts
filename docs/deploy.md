@@ -40,8 +40,63 @@ Or keep the configuration in a file: `cp .env.example .env`, edit it, then `npm 
 |---|---|---|---|
 | `ARTIFACTS_API_KEY` | yes | — | Bearer token for all writes and the MCP endpoint |
 | `BASE_URL` | recommended | `http://localhost:3000` | Public origin used in returned URLs |
-| `DATA_DIR` | no | `/data` | Where artifacts are stored (plain files) |
+| `STORAGE_BACKEND` | no | `local` | Where artifacts are stored: `local` or `s3` |
+| `DATA_DIR` | no | `/data` | `local` backend only — directory of plain files |
 | `PORT` | no | `3000` | Listen port |
+
+## Storage backends
+
+By default artifacts are plain files under `DATA_DIR` — back up that directory and you have
+backed up everything. This works great when the disk is durable (a mounted Docker volume, a
+persistent PaaS disk).
+
+On hosts where a restart reprovisions a **fresh container or VM with no attached volume**
+(Fly Machines without a volume, Cloud Run, Heroku dynos, some free PaaS tiers), local disk is
+wiped and artifacts are lost. Set `STORAGE_BACKEND=s3` to store them in a durable, external
+S3-compatible bucket instead; the app then holds no local state and artifacts survive any
+restart.
+
+### S3 (and S3-compatible: R2, B2, MinIO, Spaces, Wasabi, GCS interop)
+
+```bash
+STORAGE_BACKEND=s3 \
+S3_ENDPOINT=https://s3.us-east-1.amazonaws.com \
+S3_REGION=us-east-1 \
+S3_BUCKET=my-artifacts \
+S3_ACCESS_KEY_ID=... \
+S3_SECRET_ACCESS_KEY=... \
+ARTIFACTS_API_KEY=$(openssl rand -hex 32) \
+node server.js
+```
+
+| Env var | Required | Default | Purpose |
+|---|---|---|---|
+| `S3_ENDPOINT` | yes | — | S3 API endpoint (e.g. `https://<accountid>.r2.cloudflarestorage.com` for R2) |
+| `S3_BUCKET` | yes | — | Bucket name |
+| `S3_ACCESS_KEY_ID` | yes | — | Access key |
+| `S3_SECRET_ACCESS_KEY` | yes | — | Secret key |
+| `S3_REGION` | no | `us-east-1` | Region (use `auto` for R2) |
+| `S3_PREFIX` | no | — | Key prefix within the bucket, e.g. `artifacts/` |
+
+The `aws4fetch` dependency is optional and only loaded when `STORAGE_BACKEND=s3`; a plain
+`local` install never pulls it. The server runs a quick write/delete probe against the bucket
+at startup and **refuses to boot** if it is unreachable or misconfigured, rather than coming
+up empty.
+
+> **Security — the bucket MUST be private.** Artifacts are always served *through* this app,
+> so their hardening headers, `noindex`, and expiry/disable checks apply. A public bucket (or a
+> browser-facing CDN/presigned URL) would bypass all of that and expose every artifact — see
+> [SECURITY.md](../SECURITY.md). Never make the bucket or its objects public.
+
+### Migrating local → S3
+
+Because S3 object keys mirror the on-disk layout, no special tooling is needed — copy the
+existing files up, then switch the backend:
+
+```bash
+aws s3 sync ./data/artifacts s3://my-artifacts        # or: rclone sync, for R2/B2/etc.
+# then set STORAGE_BACKEND=s3 and the S3_* vars and restart
+```
 
 ## Any Dockerfile PaaS
 

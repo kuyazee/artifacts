@@ -50,7 +50,8 @@ export function assertSafeKey(key) {
 
 const BACKENDS = {
   local: () => import('./local.js'),
-  // s3, git, postgres, sqlite are added in later phases; each is loaded on demand so a
+  s3: () => import('./s3.js'),
+  // git, postgres, sqlite are added in later phases; each is loaded on demand so a
   // backend's dependency is only required when that backend is selected.
 };
 
