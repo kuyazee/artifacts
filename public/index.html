@@ -132,8 +132,31 @@
   .section-head h2 { font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--taupe); margin: 0; }
   .count { font-size: 12px; color: var(--taupe-dim); font-variant-numeric: tabular-nums; }
 
-  #filterBar { display: none; align-items: center; gap: 8px; margin: 0 0 14px; font-size: 13px; color: var(--taupe); }
-  #filterBar .ghost { padding: 3px 10px; font-size: 12px; }
+  .search {
+    width: 100%; margin: 0 0 16px; padding: 10px 13px;
+    background: var(--field); border: 1px solid var(--rim); border-radius: 9px;
+    color: var(--sand); font-size: 14px;
+  }
+  .search::placeholder { color: var(--taupe-dim); }
+
+  .group { margin: 0; }
+  .group-head {
+    display: flex; align-items: center; gap: 9px; width: 100%;
+    padding: 6px 4px; margin: 2px 0 6px; background: transparent; border: none;
+    color: var(--cream); cursor: pointer; text-align: left;
+  }
+  .group-head:hover { color: var(--cream-hi); }
+  .group-head .caret { color: var(--taupe); font-size: 10px; transition: transform .15s; }
+  .group.collapsed .group-head .caret { transform: rotate(-90deg); }
+  .group-name { font-size: 13px; font-weight: 700; letter-spacing: .01em; }
+  .group-name.muted { color: var(--taupe); font-weight: 600; }
+  .group-count {
+    font-size: 11px; color: var(--taupe-dim); background: var(--field);
+    border: 1px solid var(--rim-soft); border-radius: 2em; padding: 1px 8px;
+    font-variant-numeric: tabular-nums;
+  }
+  .group-items { display: flex; flex-direction: column; gap: 8px; }
+  .group.collapsed .group-items { display: none; }
 
   .items { display: flex; flex-direction: column; gap: 8px; }
   .item {
@@ -270,6 +293,7 @@
       </div>
       <div class="row">
         <input id="tags" placeholder="tags, comma-separated (optional)">
+        <input id="project" placeholder="project (optional)">
       </div>
       <textarea id="content" placeholder="Paste HTML, a React component with a default export, or Markdown…" spellcheck="false"></textarea>
       <button id="publish">Publish</button>
@@ -296,7 +320,7 @@
 
   <div id="list">
     <div class="section-head"><h2>Published</h2><span class="count" id="count"></span></div>
-    <div id="filterBar">Filtering by <button class="chip active" id="filterTag"></button> <button class="ghost" id="clearFilter">clear</button></div>
+    <input id="search" class="search" type="search" placeholder="Search project, title, slug, or tag…" autocomplete="off">
     <div class="items" id="rows"></div>
   </div>
 </div>
@@ -470,12 +494,14 @@
     if ($('title').value) body.title = $('title').value;
     if ($('frame').value !== 'default') body.frame = $('frame').value === 'on';
     if ($('tags').value.trim()) body.tags = $('tags').value;
+    if ($('project').value.trim()) body.project = $('project').value.trim();
     const r = await publish(body);
     if (r.ok) {
       addResult('pasted ' + body.type, r.data.url, true);
       navigator.clipboard.writeText(r.data.url).catch(() => {});
       $('content').value = '';
       $('tags').value = '';
+      $('project').value = '';
       loadList();
     } else {
       addResult('pasted ' + body.type, r.data.error || ('HTTP ' + r.status), false);
@@ -485,12 +511,7 @@
   // ---- list ----
 
   let allItems = [];
-  let activeTag = null;
-
-  function setFilter(tag) {
-    activeTag = tag;
-    renderList();
-  }
+  const collapsed = new Set();
 
   async function loadList() {
     try {
@@ -499,6 +520,21 @@
       allItems = await res.json();
       renderList();
     } catch {}
+  }
+
+  function matchItem(a, q) {
+    return (a.slug && a.slug.toLowerCase().includes(q))
+      || (a.title && a.title.toLowerCase().includes(q))
+      || (a.type && a.type.toLowerCase().includes(q))
+      || (a.project && a.project.toLowerCase().includes(q))
+      || (a.tags || []).some((t) => t.toLowerCase().includes(q));
+  }
+
+  function showEmpty(text) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = text;
+    $('rows').appendChild(empty);
   }
 
   function pill(text) {
@@ -522,35 +558,66 @@
   }
 
   function renderList() {
-    if (activeTag) {
-      $('filterTag').textContent = activeTag;
-      $('filterBar').style.display = 'flex';
-    } else {
-      $('filterBar').style.display = 'none';
-    }
-    const items = activeTag
-      ? allItems.filter((a) => (a.tags || []).includes(activeTag))
-      : allItems;
+    const q = ($('search').value || '').trim().toLowerCase();
+    const filtered = q ? allItems.filter((a) => matchItem(a, q)) : allItems;
 
     $('count').textContent = allItems.length
-      ? (activeTag ? items.length + ' of ' + allItems.length
-                   : allItems.length + (allItems.length === 1 ? ' artifact' : ' artifacts'))
+      ? (q ? filtered.length + ' of ' + allItems.length
+           : allItems.length + (allItems.length === 1 ? ' artifact' : ' artifacts'))
       : '';
 
     const rows = $('rows');
     rows.innerHTML = '';
 
-    if (!items.length) {
-      const empty = document.createElement('div');
-      empty.className = 'empty';
-      empty.textContent = activeTag
-        ? 'No artifacts tagged “' + activeTag + '”.'
-        : 'Nothing published yet — drop a file above to start.';
-      rows.appendChild(empty);
+    if (!allItems.length) return showEmpty('Nothing published yet — drop a file above to start.');
+    if (!filtered.length) return showEmpty('No matches for “' + q + '”.');
+
+    // No projects in use yet → a plain flat list.
+    if (!allItems.some((a) => a.project)) {
+      for (const a of filtered) rows.appendChild(buildItem(a));
       return;
     }
 
-    for (const a of items) {
+    // Group by project; the "No project" bucket sorts last.
+    const groups = new Map();
+    for (const a of filtered) {
+      const key = a.project || '';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(a);
+    }
+    const keys = [...groups.keys()].sort((x, y) => {
+      if (x === '') return 1;
+      if (y === '') return -1;
+      return x.toLowerCase().localeCompare(y.toLowerCase());
+    });
+    for (const key of keys) rows.appendChild(buildGroup(key, groups.get(key), !!q));
+  }
+
+  function buildGroup(key, items, searching) {
+    const sec = document.createElement('section');
+    sec.className = 'group' + (!searching && collapsed.has(key) ? ' collapsed' : '');
+    const head = document.createElement('button');
+    head.className = 'group-head';
+    const caret = document.createElement('span');
+    caret.className = 'caret'; caret.textContent = '▾';
+    const name = document.createElement('span');
+    name.className = 'group-name' + (key ? '' : ' muted');
+    name.textContent = key || 'No project';
+    const count = document.createElement('span');
+    count.className = 'group-count'; count.textContent = items.length;
+    head.append(caret, name, count);
+    head.addEventListener('click', () => {
+      if (collapsed.has(key)) collapsed.delete(key); else collapsed.add(key);
+      renderList();
+    });
+    const box = document.createElement('div');
+    box.className = 'group-items';
+    for (const a of items) box.appendChild(buildItem(a));
+    sec.append(head, box);
+    return sec;
+  }
+
+  function buildItem(a) {
       const expired = a.expiresAt && Date.parse(a.expiresAt) <= Date.now();
       const item = document.createElement('div');
       item.className = 'item' + ((a.disabled || expired) ? ' off' : '');
@@ -584,9 +651,9 @@
       meta.className = 'item-meta';
       for (const t of a.tags || []) {
         const chip = document.createElement('button');
-        chip.className = 'chip' + (t === activeTag ? ' active' : '');
+        chip.className = 'chip';
         chip.textContent = t;
-        chip.addEventListener('click', () => setFilter(t === activeTag ? null : t));
+        chip.addEventListener('click', () => { $('search').value = t; renderList(); });
         meta.appendChild(chip);
       }
       const time = document.createElement('span');
@@ -615,6 +682,20 @@
         if (!res.ok) {
           const d = await res.json().catch(() => ({}));
           alert(d.error || 'rename failed');
+        }
+        loadList();
+      });
+
+      const projBtn = actBtn('Project', 'proj');
+      projBtn.addEventListener('click', async () => {
+        const v = prompt('Project for “' + a.slug + '” (empty to clear)', a.project || '');
+        if (v === null) return;
+        const res = await fetch('/api/artifacts/' + a.slug, {
+          method: 'PATCH', headers: headers(), body: JSON.stringify({ project: v.trim() }),
+        });
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          alert(d.error || 'project update failed');
         }
         loadList();
       });
@@ -681,12 +762,13 @@
         loadList();
       });
 
-      actions.append(copy, ren, frm, tagbtn, tgl, exp, del);
+      actions.append(copy, ren, projBtn, frm, tagbtn, tgl, exp, del);
 
       item.append(body, actions);
-      rows.appendChild(item);
-    }
+      return item;
   }
+
+  $('search').addEventListener('input', renderList);
 
   // ---- settings (global config) ----
 
@@ -717,8 +799,6 @@
       el.textContent = 'Save failed';
     }
   });
-
-  $('clearFilter').addEventListener('click', () => setFilter(null));
 
   // ---- boot ----
 

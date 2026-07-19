@@ -95,6 +95,30 @@ if curl -s "$BASE/api/artifacts?tag=swapped" -H "$AUTH" | grep -q '"ci-tags"'; t
 echo "ok: PATCH tags replace/clear"
 curl -sf -X DELETE "$BASE/api/artifacts/ci-tags" -H "$AUTH" > /dev/null
 
+# project: publish with a project -> stored, case preserved
+curl -sf -X POST "$BASE/api/artifacts" -H "$AUTH" -H "$JSON" \
+  -d '{"content":"<h1>p</h1>","type":"html","slug":"ci-proj","project":"Acme Redesign"}' > /dev/null
+curl -s "$BASE/api/artifacts" -H "$AUTH" | grep -qF '"project":"Acme Redesign"' || fail "project not stored"
+echo "ok: project stored"
+
+# invalid project -> 400
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/artifacts" -H "$AUTH" -H "$JSON" \
+  -d '{"content":"<h1>x</h1>","type":"html","project":"bad/name"}')
+expect_code 400 "$code" "invalid project rejected"
+
+# ?project= filter includes matches and excludes non-matches
+curl -s "$BASE/api/artifacts?project=Acme%20Redesign" -H "$AUTH" | grep -q '"ci-proj"' || fail "project filter missed match"
+if curl -s "$BASE/api/artifacts?project=Nope" -H "$AUTH" | grep -q '"ci-proj"'; then fail "project filter false positive"; fi
+echo "ok: project filter"
+
+# PUT without project preserves it; PATCH empty string clears it
+curl -sf -X PUT "$BASE/api/artifacts/ci-proj" -H "$AUTH" -H "$JSON" -d '{"content":"<h1>p2</h1>","type":"html"}' > /dev/null
+curl -s "$BASE/api/artifacts" -H "$AUTH" | grep -qF '"project":"Acme Redesign"' || fail "PUT dropped project"
+curl -sf -X PATCH "$BASE/api/artifacts/ci-proj" -H "$AUTH" -H "$JSON" -d '{"project":""}' > /dev/null
+if curl -s "$BASE/api/artifacts?project=Acme%20Redesign" -H "$AUTH" | grep -q '"ci-proj"'; then fail "PATCH project clear failed"; fi
+echo "ok: PUT preserves / PATCH clears project"
+curl -sf -X DELETE "$BASE/api/artifacts/ci-proj" -H "$AUTH" > /dev/null
+
 # zip site: build a tiny site and deploy it
 ZIPDIR=$(mktemp -d)
 mkdir -p "$ZIPDIR/site/css"
@@ -138,6 +162,11 @@ echo "ok: cli config"
 node "$CLI_DIR/cli.js" frame ci-cli-2 off > /dev/null
 if curl -s "$BASE/a/ci-cli-2" | grep -q '<iframe'; then fail "cli frame off still framed"; fi
 echo "ok: cli frame off"
+node "$CLI_DIR/cli.js" project ci-cli-2 web-revamp > /dev/null
+node "$CLI_DIR/cli.js" list --project web-revamp | grep -q 'ci-cli-2' || fail "cli project not stored"
+node "$CLI_DIR/cli.js" project ci-cli-2 none > /dev/null
+if node "$CLI_DIR/cli.js" list --project web-revamp | grep -q 'ci-cli-2'; then fail "cli project clear failed"; fi
+echo "ok: cli project"
 node "$CLI_DIR/cli.js" deploy "$ZIPDIR/site" --slug ci-cli-zip > /dev/null
 code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/a/ci-cli-zip/css/s.css")
 expect_code 200 "$code" "cli zip deploy"

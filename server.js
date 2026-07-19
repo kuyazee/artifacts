@@ -99,6 +99,9 @@ const TYPES = ['html', 'jsx', 'tsx', 'md'];
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{2,63}$/;
 const TAG_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const MAX_TAGS = 10;
+// A project is a single grouping label (one per artifact). Friendlier than a
+// slug — letters, digits, spaces, dashes, underscores — but bounded.
+const PROJECT_RE = /^[A-Za-z0-9][\w .-]{0,63}$/;
 const SOURCE_EXT = { html: 'html', jsx: 'jsx', tsx: 'tsx', md: 'md' };
 
 // Pinned versions shared with the jsx shell. `external=react` keeps packages on
@@ -247,12 +250,13 @@ function extractSiteFiles(zip) {
   return files;
 }
 
-async function saveZipArtifact(buffer, { slug, title, expiresAt, tags }) {
+async function saveZipArtifact(buffer, { slug, title, expiresAt, tags, project }) {
   if (slug !== undefined && !SLUG_RE.test(slug)) {
     throw new ApiError(400, 'slug must match [a-z0-9][a-z0-9-]{2,63}');
   }
   const expiry = expiresAt !== undefined ? parseExpiresAt(expiresAt) : undefined;
   const tagList = tags !== undefined ? parseTags(tags) : undefined;
+  const projectName = project !== undefined ? parseProject(project) : undefined;
 
   let zip;
   try {
@@ -283,6 +287,7 @@ async function saveZipArtifact(buffer, { slug, title, expiresAt, tags }) {
   };
   if (expiry !== undefined) meta.expiresAt = expiry;
   if (tagList?.length) meta.tags = tagList;
+  if (projectName) meta.project = projectName;
   await fs.writeFile(path.join(artifactDir(finalSlug), 'meta.json'), JSON.stringify(meta, null, 2));
   return { slug: finalSlug, url: `${BASE_URL}/a/${finalSlug}/`, files: files.length };
 }
@@ -308,6 +313,20 @@ function parseTags(value) {
   return tags;
 }
 
+// Returns a trimmed project name, or '' to clear it. null/'' both mean clear.
+function parseProject(value) {
+  if (value === null) return '';
+  if (typeof value !== 'string') {
+    throw new ApiError(400, 'project must be a string');
+  }
+  const project = value.trim();
+  if (!project) return '';
+  if (!PROJECT_RE.test(project)) {
+    throw new ApiError(400, 'project must match [A-Za-z0-9][\\w .-]{0,63} (letters, digits, spaces, - _ .)');
+  }
+  return project;
+}
+
 function parseExpiresAt(value) {
   if (value === null || value === '') return undefined;
   if (typeof value !== 'string' || Number.isNaN(Date.parse(value))) {
@@ -320,7 +339,7 @@ function isExpired(meta) {
   return Boolean(meta.expiresAt && Date.parse(meta.expiresAt) <= Date.now());
 }
 
-async function saveArtifact({ content, type = 'html', slug, title, expiresAt, frame, tags }, { replace = false } = {}) {
+async function saveArtifact({ content, type = 'html', slug, title, expiresAt, frame, tags, project }, { replace = false } = {}) {
   if (typeof content !== 'string' || !content.trim()) {
     throw new ApiError(400, 'content (non-empty string) is required');
   }
@@ -329,6 +348,7 @@ async function saveArtifact({ content, type = 'html', slug, title, expiresAt, fr
   }
   const expiry = expiresAt !== undefined ? parseExpiresAt(expiresAt) : undefined;
   const tagList = tags !== undefined ? parseTags(tags) : undefined;
+  const projectName = project !== undefined ? parseProject(project) : undefined;
   if (!TYPES.includes(type)) {
     throw new ApiError(400, `type must be one of: ${TYPES.join(', ')}`);
   }
@@ -368,11 +388,12 @@ async function saveArtifact({ content, type = 'html', slug, title, expiresAt, fr
   if (expiresAt !== undefined) meta.expiresAt = expiry;
   if (frame !== undefined) meta.frame = frame;
   if (tagList !== undefined) meta.tags = tagList.length ? tagList : undefined;
+  if (projectName !== undefined) meta.project = projectName || undefined;
   await fs.writeFile(path.join(dir, 'meta.json'), JSON.stringify(meta, null, 2));
   return { slug: finalSlug, url: `${BASE_URL}/a/${finalSlug}` };
 }
 
-async function listArtifacts({ tag } = {}) {
+async function listArtifacts({ tag, project } = {}) {
   const entries = await fs.readdir(ARTIFACTS_DIR, { withFileTypes: true });
   const metas = await Promise.all(
     entries.filter((e) => e.isDirectory()).map((e) => readMeta(e.name)),
@@ -384,6 +405,10 @@ async function listArtifacts({ tag } = {}) {
   if (tag !== undefined) {
     const wanted = String(tag).trim().toLowerCase();
     items = items.filter((a) => a.tags.includes(wanted));
+  }
+  if (project !== undefined) {
+    const wanted = String(project).trim();
+    items = items.filter((a) => (a.project || '') === wanted);
   }
   return items;
 }
@@ -431,6 +456,11 @@ async function patchArtifact(slug, patch) {
   if (patch.tags !== undefined) {
     const tags = parseTags(patch.tags);
     meta.tags = tags.length ? tags : undefined;
+  }
+
+  if (patch.project !== undefined) {
+    const project = parseProject(patch.project);
+    meta.project = project || undefined; // '' clears it
   }
 
   meta.updatedAt = new Date().toISOString();
@@ -587,8 +617,8 @@ app.post('/api/artifacts/zip', requireAuth, zipBody, async (req, res, next) => {
     if (!Buffer.isBuffer(req.body) || !req.body.length) {
       throw new ApiError(400, 'raw zip body required (Content-Type: application/zip)');
     }
-    const { slug, title, expiresAt, tags } = req.query;
-    res.status(201).json(await saveZipArtifact(req.body, { slug, title, expiresAt, tags }));
+    const { slug, title, expiresAt, tags, project } = req.query;
+    res.status(201).json(await saveZipArtifact(req.body, { slug, title, expiresAt, tags, project }));
   } catch (err) {
     next(err);
   }
@@ -621,8 +651,11 @@ app.delete('/api/artifacts/:slug', requireAuth, async (req, res, next) => {
 
 app.get('/api/artifacts', requireAuth, async (req, res, next) => {
   try {
-    const { tag } = req.query;
-    res.json(await listArtifacts(typeof tag === 'string' ? { tag } : {}));
+    const { tag, project } = req.query;
+    const opts = {};
+    if (typeof tag === 'string') opts.tag = tag;
+    if (typeof project === 'string') opts.project = project;
+    res.json(await listArtifacts(opts));
   } catch (err) {
     next(err);
   }
@@ -670,6 +703,10 @@ function createMcpServer() {
           .array(z.string())
           .optional()
           .describe('Tags for organizing artifacts: [a-z0-9-], 1-32 chars each, max 10'),
+        project: z
+          .string()
+          .optional()
+          .describe('Project this artifact belongs to (single grouping label, max 64 chars)'),
       },
     },
     async (args) => {
@@ -696,6 +733,10 @@ function createMcpServer() {
           .array(z.string())
           .optional()
           .describe('Replaces all tags when provided; omit to keep existing tags'),
+        project: z
+          .string()
+          .optional()
+          .describe('Project this artifact belongs to; omit to keep the existing project'),
       },
     },
     async (args) => {
@@ -760,6 +801,24 @@ function createMcpServer() {
   );
 
   server.registerTool(
+    'set_artifact_project',
+    {
+      title: 'Set artifact project',
+      description:
+        'Set or clear the project an artifact belongs to. Projects group artifacts in the web UI. An empty string clears it.',
+      inputSchema: {
+        slug: z.string(),
+        project: z.string().describe('Project name (max 64 chars); empty string clears it'),
+      },
+    },
+    async ({ slug, project }) => {
+      await patchArtifact(slug, { project });
+      const text = project.trim() ? `${slug} → project “${project.trim()}”` : `project cleared for ${slug}`;
+      return { content: [{ type: 'text', text }] };
+    },
+  );
+
+  server.registerTool(
     'disable_artifact',
     {
       title: 'Disable artifact',
@@ -813,13 +872,17 @@ function createMcpServer() {
     {
       title: 'List artifacts',
       description:
-        'List all published artifacts (slug, type, title, tags, timestamps). Pass tag to only list artifacts carrying that tag.',
+        'List all published artifacts (slug, type, title, tags, project, timestamps). Pass tag and/or project to filter.',
       inputSchema: {
         tag: z.string().optional().describe('Only return artifacts with this tag'),
+        project: z.string().optional().describe('Only return artifacts in this project'),
       },
     },
-    async ({ tag }) => {
-      const items = await listArtifacts(tag !== undefined ? { tag } : {});
+    async ({ tag, project }) => {
+      const opts = {};
+      if (tag !== undefined) opts.tag = tag;
+      if (project !== undefined) opts.project = project;
+      const items = await listArtifacts(opts);
       return { content: [{ type: 'text', text: JSON.stringify(items, null, 2) }] };
     },
   );
