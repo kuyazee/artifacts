@@ -83,6 +83,16 @@
 
   #list { margin-top: 32px; }
   #list h2 { font-size: 14px; color: #7d8590; }
+  .chip {
+    display: inline-block; padding: 1px 8px; margin: 0 4px 2px 0;
+    border-radius: 2em; background: #21262d; border: 1px solid #30363d;
+    color: #7d8590; font-size: 11px; font-weight: 400; cursor: pointer;
+  }
+  .chip:hover { color: #e6edf3; border-color: #7d8590; background: #21262d; }
+  .chip.active { border-color: #2ea043; color: #e6edf3; }
+  #filterBar { display: none; margin: 0 0 8px; font-size: 13px; color: #7d8590; }
+  #filterBar .chip { margin: 0 6px; }
+  #filterBar .ghost { padding: 2px 10px; font-size: 12px; }
   #list table { width: 100%; border-collapse: collapse; font-size: 13px; }
   #list td, #list th { text-align: left; padding: 6px 8px; border-bottom: 1px solid #21262d; }
   #list a { color: #58a6ff; text-decoration: none; }
@@ -133,6 +143,9 @@
         <input id="slug" placeholder="custom slug (optional)">
         <input id="title" placeholder="title (optional)">
       </div>
+      <div class="row">
+        <input id="tags" placeholder="tags, comma-separated (optional)">
+      </div>
       <textarea id="content" placeholder="Paste HTML, a React component with a default export, or Markdown…" spellcheck="false"></textarea>
       <button id="publish">Publish</button>
     </div>
@@ -140,6 +153,7 @@
 
   <div id="list">
     <h2>Published artifacts</h2>
+    <div id="filterBar">Filtering by<button class="chip active" id="filterTag"></button><button class="ghost" id="clearFilter">clear</button></div>
     <table><tbody id="rows"></tbody></table>
   </div>
 </div>
@@ -310,11 +324,13 @@
     const body = { content: $('content').value, type: $('type').value };
     if ($('slug').value) body.slug = $('slug').value;
     if ($('title').value) body.title = $('title').value;
+    if ($('tags').value.trim()) body.tags = $('tags').value;
     const r = await publish(body);
     if (r.ok) {
       addResult('pasted ' + body.type, r.data.url, true);
       navigator.clipboard.writeText(r.data.url).catch(() => {});
       $('content').value = '';
+      $('tags').value = '';
       loadList();
     } else {
       addResult('pasted ' + body.type, r.data.error || ('HTTP ' + r.status), false);
@@ -323,17 +339,40 @@
 
   // ---- list ----
 
+  let allItems = [];
+  let activeTag = null;
+
+  function setFilter(tag) {
+    activeTag = tag;
+    renderList();
+  }
+
   async function loadList() {
     try {
       const res = await fetch('/api/artifacts', { headers: headers() });
       if (!res.ok) return;
-      const items = await res.json();
-      $('rows').innerHTML = '';
-      for (const a of items) {
+      allItems = await res.json();
+      renderList();
+    } catch {}
+  }
+
+  function renderList() {
+    if (activeTag) {
+      $('filterTag').textContent = activeTag;
+      $('filterBar').style.display = 'block';
+    } else {
+      $('filterBar').style.display = 'none';
+    }
+    const items = activeTag
+      ? allItems.filter((a) => (a.tags || []).includes(activeTag))
+      : allItems;
+    $('rows').innerHTML = '';
+    for (const a of items) {
         const tr = document.createElement('tr');
-        tr.innerHTML = '<td><a target="_blank"></a></td><td></td><td></td><td></td>' +
+        tr.innerHTML = '<td><a target="_blank"></a></td><td></td><td></td><td class="tags"></td><td></td>' +
           '<td><button class="ghost small">Copy</button></td>' +
           '<td><button class="act ren">rename</button></td>' +
+          '<td><button class="act tagbtn">tags</button></td>' +
           '<td><button class="act tgl"></button></td>' +
           '<td><button class="act exp"></button></td>' +
           '<td><button class="del">delete</button></td>';
@@ -341,9 +380,31 @@
         link.href = '/a/' + a.slug; link.textContent = a.slug;
         tr.children[1].textContent = a.type;
         tr.children[2].textContent = a.title || '';
-        tr.children[3].textContent = (a.updatedAt || '').slice(0, 16).replace('T', ' ');
+        const tagsCell = tr.querySelector('td.tags');
+        for (const t of a.tags || []) {
+          const chip = document.createElement('button');
+          chip.className = 'chip' + (t === activeTag ? ' active' : '');
+          chip.textContent = t;
+          chip.addEventListener('click', () => setFilter(t === activeTag ? null : t));
+          tagsCell.appendChild(chip);
+        }
+        tr.children[4].textContent = (a.updatedAt || '').slice(0, 16).replace('T', ' ');
         tr.querySelector('.ghost').addEventListener('click', () =>
           navigator.clipboard.writeText(location.origin + '/a/' + a.slug));
+        tr.querySelector('.tagbtn').addEventListener('click', async () => {
+          const v = prompt(
+            'Tags for "' + a.slug + '" (comma-separated, empty to clear)',
+            (a.tags || []).join(', '));
+          if (v === null) return;
+          const res = await fetch('/api/artifacts/' + a.slug, {
+            method: 'PATCH', headers: headers(), body: JSON.stringify({ tags: v.trim() }),
+          });
+          if (!res.ok) {
+            const d = await res.json().catch(() => ({}));
+            alert(d.error || 'tags update failed');
+          }
+          loadList();
+        });
         tr.querySelector('.ren').addEventListener('click', async () => {
           const ns = prompt('New slug for "' + a.slug + '"', a.slug);
           if (!ns || ns === a.slug) return;
@@ -390,9 +451,10 @@
           loadList();
         });
         $('rows').appendChild(tr);
-      }
-    } catch {}
+    }
   }
+
+  $('clearFilter').addEventListener('click', () => setFilter(null));
 
   // ---- boot ----
 

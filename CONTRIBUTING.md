@@ -12,7 +12,7 @@ ARTIFACTS_API_KEY=test node server.js
 # UI at http://localhost:3000 (unlock with "test")
 ```
 
-Point `DATA_DIR` somewhere disposable if you don't want `./data` created.
+Or copy `.env.example` to `.env` and run `npm run dev`. Point `DATA_DIR` somewhere disposable if you don't want `./data` created.
 
 ## Tests
 

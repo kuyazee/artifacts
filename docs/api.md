@@ -5,12 +5,12 @@ Full HTTP reference, including zip-site deploys. ([← back to README](../README
 All `/api/*` and `/mcp` calls need `Authorization: Bearer $ARTIFACTS_API_KEY`. Reads under `/a/` are public.
 
 ```
-POST   /api/artifacts        {content, type: html|jsx|tsx|md, slug?, title?, expiresAt?} → 201 {slug, url}
-POST   /api/artifacts/zip    raw zip body (?slug=&title=&expiresAt=)         → 201 {slug, url, files}
-PUT    /api/artifacts/:slug  {content, type, title?, expiresAt?}             → {slug, url}
-PATCH  /api/artifacts/:slug  {slug?, disabled?, expiresAt?}                  → {slug, url}   (rename / disable / expiry)
+POST   /api/artifacts        {content, type: html|jsx|tsx|md, slug?, title?, tags?, expiresAt?} → 201 {slug, url}
+POST   /api/artifacts/zip    raw zip body (?slug=&title=&tags=&expiresAt=)   → 201 {slug, url, files}
+PUT    /api/artifacts/:slug  {content, type, title?, tags?, expiresAt?}      → {slug, url}
+PATCH  /api/artifacts/:slug  {slug?, disabled?, expiresAt?, tags?}           → {slug, url}   (rename / disable / expiry / tags)
 DELETE /api/artifacts/:slug                                                  → {deleted}
-GET    /api/artifacts        list                                            → [{slug, type, title, createdAt, updatedAt}]
+GET    /api/artifacts        list (?tag= to filter)                          → [{slug, type, title, tags, createdAt, updatedAt}]
 GET    /a/:slug              rendered artifact (public)
 GET    /a/:slug/source       original uploaded source, text/plain (public)
 ```
@@ -20,6 +20,7 @@ Semantics:
 - Body limits: 10 MB JSON, 50 MB zip.
 - `POST` with an existing slug → `409` (use `PUT` to update).
 - Disabled artifacts return `404`; expired ones (`expiresAt` in the past) return `410`. Both keep their content — re-enable or clear/extend the expiry to serve again.
+- Tags: an array of strings, or one comma-separated string (the only form the zip endpoint's `?tags=` accepts). Each tag must match `[a-z0-9][a-z0-9-]{0,31}`; max 10 per artifact. Input is lowercased and deduplicated. `PATCH` replaces the whole list; an empty list clears it. `PUT` without `tags` keeps the existing ones. Artifacts published before tags existed list as `"tags": []`. In the web UI, tags render as chips — click one to filter the list.
 
 Publish a file:
 

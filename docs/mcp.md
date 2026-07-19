@@ -8,13 +8,14 @@ The server exposes a streamable HTTP endpoint at `/mcp`, bearer-authenticated. R
 
 | Tool | Args | Returns |
 |---|---|---|
-| `publish_artifact` | `content`, `type`, `slug?`, `title?`, `expiresAt?` | public URL |
-| `update_artifact` | `slug`, `content`, `type`, `title?` | public URL |
+| `publish_artifact` | `content`, `type`, `slug?`, `title?`, `tags?`, `expiresAt?` | public URL |
+| `update_artifact` | `slug`, `content`, `type`, `title?`, `tags?` | public URL |
 | `rename_artifact` | `slug`, `newSlug` | new public URL |
 | `disable_artifact` | `slug` | confirmation (URL serves 404, content kept) |
 | `enable_artifact` | `slug` | confirmation |
 | `set_artifact_expiry` | `slug`, `expiresAt` (ISO 8601 or `null` to clear) | confirmation |
-| `list_artifacts` | — | JSON list |
+| `set_artifact_tags` | `slug`, `tags` (full list; empty array clears) | confirmation |
+| `list_artifacts` | `tag?` (filter) | JSON list |
 | `delete_artifact` | `slug` | confirmation |
 
 No MCP tool for zip sites (binary payload) — use the [CLI](cli.md) or the [zip endpoint](api.md#zip-sites-multi-file-static-projects).
