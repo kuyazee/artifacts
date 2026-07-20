@@ -151,6 +151,31 @@ curl -sf -X DELETE "$BASE/api/artifacts/ci-zip" -H "$AUTH" > /dev/null
 code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/a/ci-smoke-2")
 expect_code 404 "$code" "deleted artifact"
 
+# --- DoS liveness: a burst of unauthenticated login POSTs must not stall /healthz ---
+# Fire 40 concurrent logins (each triggers scrypt) in the background, then time a healthz.
+for i in $(seq 1 40); do
+  curl -s -o /dev/null -X POST "$BASE/api/auth/login" -H "$JSON" \
+    -d '{"username":"nobody","password":"wrongwrongwrong"}' &
+done
+start=$(date +%s%N)
+code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$BASE/healthz")
+end=$(date +%s%N)
+wait
+expect_code 200 "$code" "healthz responsive under scrypt load"
+ms=$(( (end - start) / 1000000 ))
+[ "$ms" -lt 2000 ] || fail "healthz took ${ms}ms under load (event loop stalled?)"
+echo "ok: healthz stayed responsive (${ms}ms) under 40 concurrent logins"
+
+# --- login rate limiting: the burst above exhausted the per-IP login bucket (10/window),
+# so a further failed login must 429 with a Retry-After header. ---
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/login" -H "$JSON" \
+  -d '{"username":"admin","password":"definitely-wrong"}')
+expect_code 429 "$code" "login rate limited after burst"
+hdr=$(curl -s -D - -o /dev/null -X POST "$BASE/api/auth/login" -H "$JSON" \
+  -d '{"username":"admin","password":"x"}')
+echo "$hdr" | grep -qi '^Retry-After:' || fail "429 missing Retry-After header"
+echo "ok: login limiter sets Retry-After"
+
 # CLI round-trip (cli.js lives next to this checkout; skipped when deps absent,
 # e.g. the container-smoke job which doesn't run npm ci)
 CLI_DIR=$(cd "$(dirname "$0")/../.." && pwd)

@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 
 import AdmZip from 'adm-zip';
 import express from 'express';
@@ -12,12 +13,14 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 
 import { createStorage, UnsafeKeyError } from './storage/index.js';
+import { createRateLimiter } from './ratelimit.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const PORT = Number(process.env.PORT || 3000);
 const BASE_URL = (process.env.BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
 const API_KEY = process.env.ARTIFACTS_API_KEY;
+const TRUST_PROXY = (process.env.TRUST_PROXY || 'none').toLowerCase(); // none | cloudflare | xff
 
 if (!API_KEY) {
   console.error('ARTIFACTS_API_KEY env var is required');
@@ -139,11 +142,41 @@ async function loadAuth() {
 
 let auth = await loadAuth();
 
+// scrypt is memory-hard and was synchronous, blocking the event loop on the two
+// unauthenticated credential routes (login, unlock). Run it on the libuv threadpool
+// and cap concurrency so a flood degrades those routes instead of stalling the process.
+// Declared before the boot-time admin seed below, which calls hashPassword during init.
+const scryptAsync = promisify(crypto.scrypt);
+const SCRYPT_MAX_CONCURRENT = 2;
+const SCRYPT_MAX_QUEUE = 20;
+let scryptActive = 0;
+const scryptQueue = [];
+function withScrypt(fn) {
+  return new Promise((resolve, reject) => {
+    const run = () => {
+      scryptActive++;
+      Promise.resolve()
+        .then(fn)
+        .then(resolve, reject)
+        .finally(() => {
+          scryptActive--;
+          const next = scryptQueue.shift();
+          if (next) next();
+        });
+    };
+    if (scryptActive < SCRYPT_MAX_CONCURRENT) return run();
+    if (scryptQueue.length >= SCRYPT_MAX_QUEUE) {
+      return reject(new ApiError(429, 'server busy — retry shortly'));
+    }
+    scryptQueue.push(run);
+  });
+}
+
 // Seed the single admin account from env on first boot (skips the setup screen).
 // Like config.json, auth.json is otherwise created lazily — never written on a
 // plain boot with nothing to persist.
 if (!auth.admin && ADMIN_USERNAME && ADMIN_PASSWORD) {
-  auth.admin = { username: ADMIN_USERNAME, ...hashPassword(ADMIN_PASSWORD) };
+  auth.admin = { username: ADMIN_USERNAME, ...(await hashPassword(ADMIN_PASSWORD)) };
   await saveAuth();
   console.log(`admin account "${ADMIN_USERNAME}" created from env`);
 }
@@ -165,13 +198,14 @@ async function ensureSessionSecret() {
 
 // Passwords: scrypt (built-in, memory-hard). Keys: sha256 — API keys are already
 // 24 bytes of entropy, so a fast hash is safe and keeps lookup constant-time.
-function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
-  return { salt, passwordHash: crypto.scryptSync(password, salt, 64).toString('hex') };
+async function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
+  const buf = await withScrypt(() => scryptAsync(password, salt, 64));
+  return { salt, passwordHash: buf.toString('hex') };
 }
 
-function verifyPassword(password, admin) {
+async function verifyPassword(password, admin) {
   if (typeof password !== 'string' || !admin?.passwordHash || !admin?.salt) return false;
-  const hash = crypto.scryptSync(password, admin.salt, 64);
+  const hash = await withScrypt(() => scryptAsync(password, admin.salt, 64));
   const stored = Buffer.from(admin.passwordHash, 'hex');
   return hash.length === stored.length && crypto.timingSafeEqual(hash, stored);
 }
@@ -269,6 +303,39 @@ function touchKey(key) {
   if (now - last < LASTUSED_THROTTLE_MS) return;
   key.lastUsedAt = new Date(now).toISOString();
   saveAuth().catch((err) => console.error('lastUsedAt persist failed:', err));
+}
+
+// Rate-limit bucket for this request. Under cloudflared every request arrives from
+// loopback, so the real client is only in CF-Connecting-IP; trusting that header is
+// safe ONLY while the tunnel is the sole ingress (origin has no open ports). Default
+// 'none' uses the socket address — correct when nothing proxies, wrong behind a proxy.
+function clientIp(req) {
+  let ip;
+  if (TRUST_PROXY === 'cloudflare') ip = req.headers['cf-connecting-ip'];
+  else if (TRUST_PROXY === 'xff') {
+    const xff = req.headers['x-forwarded-for'];
+    if (typeof xff === 'string' && xff) ip = xff.split(',').pop().trim();
+  }
+  ip = (ip || req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+  return ipBucket(ip);
+}
+
+function ipBucket(ip) {
+  if (!ip.includes(':')) return ip; // IPv4 — one address, one bucket
+  // IPv6: bucket by the /64 network prefix (an attacker owning a /64 has ~1.8e19
+  // addresses; per-address limiting would be free to defeat). Expand :: first.
+  const clean = ip.split('%')[0].replace(/^\[|\]$/g, '');
+  const [head, tail = ''] = clean.split('::');
+  const h = head ? head.split(':') : [];
+  const t = tail ? tail.split(':') : [];
+  const full = [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill('0'), ...t];
+  return full.slice(0, 4).map((x) => x || '0').join(':') + '::/64';
+}
+
+// Auth failures were logged nowhere. One JSON line per failed/limited attempt —
+// greppable, no dependency, no PII beyond the client IP the operator already sees.
+function logAuth(event, fields) {
+  console.warn(JSON.stringify({ ts: new Date().toISOString(), event, ...fields }));
 }
 
 // Machine callers (REST / CLI / MCP): Bearer token meeting a minimum scope.
@@ -761,7 +828,7 @@ async function saveArtifact({ content, type = 'html', slug, title, expiresAt, fr
   if (visibility !== undefined) {
     if (visibility === 'password') {
       meta.visibility = 'password';
-      meta.password = hashPassword(password);
+      meta.password = await hashPassword(password);
     } else if (visibility === 'private') {
       meta.visibility = 'private';
       delete meta.password;
@@ -773,7 +840,7 @@ async function saveArtifact({ content, type = 'html', slug, title, expiresAt, fr
     if (typeof password !== 'string' || !password) {
       throw new ApiError(400, 'password must be a non-empty string');
     }
-    meta.password = hashPassword(password); // rotate on an existing password artifact
+    meta.password = await hashPassword(password); // rotate on an existing password artifact
   }
   // meta.json LAST as the commit marker (see storage/index.js write-ordering contract).
   await storage.put(`${finalSlug}/meta.json`, JSON.stringify(meta, null, 2), {
@@ -872,7 +939,7 @@ async function patchArtifact(slug, patch) {
     const target = patch.visibility !== undefined ? patch.visibility : meta.visibility || 'public';
     if (target === 'password') {
       if (typeof patch.password === 'string' && patch.password) {
-        meta.password = hashPassword(patch.password); // set or rotate
+        meta.password = await hashPassword(patch.password); // set or rotate
       } else if (!meta.password) {
         throw new ApiError(400, 'password is required for visibility "password"');
       }
@@ -1134,19 +1201,32 @@ app.get('/a/:slug/*', async (req, res) => {
 
 // Verify the unlock password and set the per-slug unlock cookie. 'password' mode
 // checks the per-artifact password; 'private' mode checks the admin password.
-// (Rate-limiting this endpoint is deferred — single-operator scope.)
+// Rate-limited per IP+slug (10 failures/hour) so it is not an unthrottled brute-force
+// channel against the credential it validates.
 app.post('/a/:slug/unlock', async (req, res, next) => {
   try {
     const { slug } = req.params;
+    const ip = clientIp(req);
+    const rlKey = `${ip}:${slug}`;
+    const gate = unlockLimiter.check(rlKey);
+    if (gate.limited) {
+      logAuth('unlock', { ip, slug, outcome: 'ratelimited' });
+      res.set('Retry-After', String(gate.retryAfter));
+      return res.status(429).json({ error: 'too many attempts, try again later' });
+    }
     const meta = SLUG_RE.test(slug) ? await readMeta(slug) : null;
     if (!meta || meta.disabled) return res.status(404).json({ error: 'not found' });
     if (isExpired(meta)) return res.status(410).json({ error: 'expired' });
     const password = req.body?.password;
     let ok = false;
-    if (meta.visibility === 'password') ok = verifyPassword(password, meta.password);
-    else if (meta.visibility === 'private') ok = verifyPassword(password, auth.admin);
+    if (meta.visibility === 'password') ok = await verifyPassword(password, meta.password);
+    else if (meta.visibility === 'private') ok = await verifyPassword(password, auth.admin);
     else return res.status(400).json({ error: 'artifact is not password protected' });
-    if (!ok) return res.status(401).json({ error: 'incorrect password' });
+    if (!ok) {
+      unlockLimiter.fail(rlKey);
+      logAuth('unlock', { ip, slug, outcome: 'fail' });
+      return res.status(401).json({ error: 'incorrect password' });
+    }
     await issueUnlock(res, slug);
     res.json({ ok: true });
   } catch (err) {
@@ -1232,6 +1312,12 @@ app.put('/api/config', requireAuth('full'), async (req, res, next) => {
 // Auth — admin session (dashboard) + managed API keys (CLI / MCP)
 // ---------------------------------------------------------------------------
 
+// 10 failed logins / 15 min per client IP; 10 failed unlocks / hour per IP+slug.
+// Failures only — a correct password never consumes budget. Edge (Cloudflare) is the
+// primary limiter; this is defense-in-depth for the two unauthenticated scrypt routes.
+const loginLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 10 });
+const unlockLimiter = createRateLimiter({ windowMs: 60 * 60 * 1000, max: 10 });
+
 // Drives the dashboard's first-run vs login screen. Unauthenticated by design.
 app.get('/api/auth/session', (req, res) => {
   res.json({ authenticated: !!sessionPrincipal(req), needsSetup: !auth.admin });
@@ -1243,7 +1329,7 @@ app.post('/api/auth/setup', async (req, res, next) => {
     if (auth.admin) throw new ApiError(409, 'admin account already exists');
     const { username, password } = req.body || {};
     validateCredentials(username, password);
-    auth.admin = { username, ...hashPassword(password) };
+    auth.admin = { username, ...(await hashPassword(password)) };
     await ensureSessionSecret();
     await saveAuth();
     await issueSession(res, username);
@@ -1255,8 +1341,17 @@ app.post('/api/auth/setup', async (req, res, next) => {
 
 app.post('/api/auth/login', async (req, res, next) => {
   try {
+    const ip = clientIp(req);
+    const gate = loginLimiter.check(ip);
+    if (gate.limited) {
+      logAuth('login', { ip, outcome: 'ratelimited' });
+      res.set('Retry-After', String(gate.retryAfter));
+      return res.status(429).json({ error: 'too many attempts, try again later' });
+    }
     const { username, password } = req.body || {};
-    if (!auth.admin || auth.admin.username !== username || !verifyPassword(password, auth.admin)) {
+    if (!auth.admin || auth.admin.username !== username || !(await verifyPassword(password, auth.admin))) {
+      loginLimiter.fail(ip);
+      logAuth('login', { ip, username: typeof username === 'string' ? username : null, outcome: 'fail' });
       throw new ApiError(401, 'invalid credentials');
     }
     await issueSession(res, username);
@@ -1274,11 +1369,11 @@ app.post('/api/auth/logout', (req, res) => {
 app.post('/api/auth/password', requireSession, async (req, res, next) => {
   try {
     const { currentPassword, newPassword } = req.body || {};
-    if (!verifyPassword(currentPassword, auth.admin)) {
+    if (!(await verifyPassword(currentPassword, auth.admin))) {
       throw new ApiError(401, 'current password incorrect');
     }
     validatePassword(newPassword);
-    auth.admin = { username: auth.admin.username, ...hashPassword(newPassword) };
+    auth.admin = { username: auth.admin.username, ...(await hashPassword(newPassword)) };
     await saveAuth();
     res.json({ ok: true });
   } catch (err) {
@@ -1691,4 +1786,10 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log(`artifacts-host listening on :${PORT} (base url ${BASE_URL})`);
+  if (TRUST_PROXY === 'none') {
+    console.warn(
+      'TRUST_PROXY=none: rate limits key on the socket address. Behind a proxy or ' +
+        'tunnel (cloudflared), all clients share one bucket — set TRUST_PROXY=cloudflare.',
+    );
+  }
 });

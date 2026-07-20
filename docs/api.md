@@ -50,7 +50,7 @@ Each artifact has one of three access levels, set with the `visibility` field on
 
 The gate is enforced on all serve paths, so `?raw=1`, `/source`, and zip sub-assets never leak a locked artifact's body. A correct password at `POST /a/:slug/unlock` sets an HttpOnly, `Path=/a/<slug>`, 7-day signed cookie, so shared links aren't re-prompted every load; the cookie is scoped to that one slug.
 
-Setting `visibility` to `public` or `private` clears any stored password. Sending `password` alone (while already in password mode) rotates it. The password is stored only as a scrypt hash — `GET /api/artifacts` returns `visibility` and a `hasPassword` boolean, never the hash. Rate-limiting the unlock endpoint is not yet implemented (single-operator scope).
+Setting `visibility` to `public` or `private` clears any stored password. Sending `password` alone (while already in password mode) rotates it. The password is stored only as a scrypt hash — `GET /api/artifacts` returns `visibility` and a `hasPassword` boolean, never the hash. `POST /a/:slug/unlock` is rate-limited to 10 failures per hour per client IP + slug (`429` with `Retry-After`), and scrypt verification runs off the event loop.
 
 Publish a file:
 

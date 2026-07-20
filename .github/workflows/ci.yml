@@ -14,6 +14,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ARTIFACTS_API_KEY: ci-test-key
+      # Seed the admin from env so CI boots via the admin-seed path (exercises scrypt
+      # at module init — guards against ordering/TDZ regressions in the hash helpers).
+      ARTIFACTS_ADMIN_USERNAME: ci-admin
+      ARTIFACTS_ADMIN_PASSWORD: ci-admin-password
       DATA_DIR: /tmp/artifacts-data
       PORT: 3000
     steps:

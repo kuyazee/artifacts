@@ -45,6 +45,7 @@ Or keep the configuration in a file: `cp .env.example .env`, edit it, then `npm 
 | `STORAGE_BACKEND` | no | `local` | Storage backend: `local`, `s3`, `git`, `postgres`, or `sqlite` |
 | `DATA_DIR` | no | `/data` | `local` backend only — directory of plain files |
 | `PORT` | no | `3000` | Listen port |
+| `TRUST_PROXY` | no | `none` | Client-IP source for rate limiting: `none` (socket address), `cloudflare` (`CF-Connecting-IP`), or `xff` (last hop of `X-Forwarded-For`). See the security note below. |
 
 Day-to-day, give CLI and MCP clients scoped [managed API keys](auth.md) rather than the bootstrap key. Auth state (admin account, session-signing secret, managed keys) persists under a reserved `auth.json` object through the storage backend, so it survives a restart on every backend with no migration. Like the frame config, it is loaded once at boot; running **multiple replicas** against a shared backend is best paired with a pre-seeded admin (`ARTIFACTS_ADMIN_*`) — a session cookie signed by one replica's boot-time secret is not valid on a replica that started before that secret was written.
 
@@ -195,4 +196,26 @@ Note for Coolify specifically: the `node:22-slim` image has no `curl`/`wget`, so
 
 ## Deployment rule (security)
 
-Uploaded HTML executes on the origin it is served from — that's the product. Serve **artifacts** (`/a/…`) from a **dedicated origin that serves nothing else**. The dashboard/API sets an admin session cookie; keeping artifacts on a separate origin ensures uploaded pages can never ride that cookie to call `/api/*`. Artifact responses themselves never set cookies. See [SECURITY.md](../SECURITY.md) for the full model.
+Uploaded HTML executes on the origin it is served from — that's the product. Serve **artifacts** (`/a/…`) from a **dedicated origin that serves nothing else**. The dashboard/API sets an admin session cookie; keeping artifacts on a separate origin ensures uploaded pages can never ride that cookie to call `/api/*`. Artifact responses never set the dashboard session cookie (the only cookie they set is a slug-scoped unlock cookie for gated artifacts). See [SECURITY.md](../SECURITY.md) for the full model.
+
+## Rate limiting and the edge
+
+The app rate-limits its two unauthenticated credential routes (`POST /api/auth/login`,
+`POST /a/:slug/unlock`) in memory: 10 failures per window per client IP, failures only.
+This is defense-in-depth, not a substitute for an edge limiter — run one.
+
+**Behind cloudflared (recommended).** Every request reaches the origin from loopback, so
+set `TRUST_PROXY=cloudflare` to key limits on `CF-Connecting-IP`. This is safe **only
+because the tunnel is the sole ingress** — the origin has no open ports, so no client can
+forge the header. If you ever expose the origin off-tunnel, this header becomes
+attacker-controlled and per-IP limiting collapses; treat "cloudflared is the only path"
+as a hard requirement. Add a Cloudflare WAF rate-limit rule on `/api/auth/login` and
+`/a/*/unlock` as the primary layer.
+
+**Behind a plain reverse proxy** (Traefik/Coolify without a CDN): set `TRUST_PROXY=xff`
+only if the proxy strips inbound `X-Forwarded-For` and appends the real client — otherwise
+leave it `none`.
+
+**Threadpool.** Password hashing (scrypt) runs on the libuv threadpool, capped at 2
+concurrent. The `local` and `sqlite` storage backends also use that pool for filesystem
+work; if you see auth latency under load, raise `UV_THREADPOOL_SIZE` (e.g. `8`).
