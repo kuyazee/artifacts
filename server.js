@@ -231,7 +231,7 @@ async function issueSession(res, username) {
 function sessionPrincipal(req) {
   const payload = verifySession(readCookie(req, SESSION_COOKIE), auth.sessionSecret);
   if (!payload) return null;
-  if (typeof payload.exp === 'number' && payload.exp < Date.now()) return null;
+  if (typeof payload.exp === 'number' && payload.exp <= Date.now()) return null;
   if (!auth.admin || payload.sub !== auth.admin.username) return null;
   return { admin: true, scopes: SCOPES, session: true };
 }
@@ -256,7 +256,7 @@ function resolveApiKey(token) {
     if (key.disabled) continue;
     const kh = Buffer.from(key.hash);
     if (kh.length !== h.length || !crypto.timingSafeEqual(kh, h)) continue;
-    if (key.expiresAt && Date.parse(key.expiresAt) < Date.now()) return null;
+    if (key.expiresAt && Date.parse(key.expiresAt) <= Date.now()) return null;
     return { admin: false, scopes: key.scopes, keyId: key.id, key };
   }
   return null;
