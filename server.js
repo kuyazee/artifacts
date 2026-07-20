@@ -13,6 +13,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 
 import { createStorage, UnsafeKeyError } from './storage/index.js';
+import { createRateLimiter } from './ratelimit.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1200,10 +1201,19 @@ app.get('/a/:slug/*', async (req, res) => {
 
 // Verify the unlock password and set the per-slug unlock cookie. 'password' mode
 // checks the per-artifact password; 'private' mode checks the admin password.
-// (Rate-limiting this endpoint is deferred — single-operator scope.)
+// Rate-limited per IP+slug (10 failures/hour) so it is not an unthrottled brute-force
+// channel against the credential it validates.
 app.post('/a/:slug/unlock', async (req, res, next) => {
   try {
     const { slug } = req.params;
+    const ip = clientIp(req);
+    const rlKey = `${ip}:${slug}`;
+    const gate = unlockLimiter.check(rlKey);
+    if (gate.limited) {
+      logAuth('unlock', { ip, slug, outcome: 'ratelimited' });
+      res.set('Retry-After', String(gate.retryAfter));
+      return res.status(429).json({ error: 'too many attempts, try again later' });
+    }
     const meta = SLUG_RE.test(slug) ? await readMeta(slug) : null;
     if (!meta || meta.disabled) return res.status(404).json({ error: 'not found' });
     if (isExpired(meta)) return res.status(410).json({ error: 'expired' });
@@ -1212,7 +1222,11 @@ app.post('/a/:slug/unlock', async (req, res, next) => {
     if (meta.visibility === 'password') ok = await verifyPassword(password, meta.password);
     else if (meta.visibility === 'private') ok = await verifyPassword(password, auth.admin);
     else return res.status(400).json({ error: 'artifact is not password protected' });
-    if (!ok) return res.status(401).json({ error: 'incorrect password' });
+    if (!ok) {
+      unlockLimiter.fail(rlKey);
+      logAuth('unlock', { ip, slug, outcome: 'fail' });
+      return res.status(401).json({ error: 'incorrect password' });
+    }
     await issueUnlock(res, slug);
     res.json({ ok: true });
   } catch (err) {
@@ -1298,6 +1312,12 @@ app.put('/api/config', requireAuth('full'), async (req, res, next) => {
 // Auth — admin session (dashboard) + managed API keys (CLI / MCP)
 // ---------------------------------------------------------------------------
 
+// 10 failed logins / 15 min per client IP; 10 failed unlocks / hour per IP+slug.
+// Failures only — a correct password never consumes budget. Edge (Cloudflare) is the
+// primary limiter; this is defense-in-depth for the two unauthenticated scrypt routes.
+const loginLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 10 });
+const unlockLimiter = createRateLimiter({ windowMs: 60 * 60 * 1000, max: 10 });
+
 // Drives the dashboard's first-run vs login screen. Unauthenticated by design.
 app.get('/api/auth/session', (req, res) => {
   res.json({ authenticated: !!sessionPrincipal(req), needsSetup: !auth.admin });
@@ -1321,8 +1341,17 @@ app.post('/api/auth/setup', async (req, res, next) => {
 
 app.post('/api/auth/login', async (req, res, next) => {
   try {
+    const ip = clientIp(req);
+    const gate = loginLimiter.check(ip);
+    if (gate.limited) {
+      logAuth('login', { ip, outcome: 'ratelimited' });
+      res.set('Retry-After', String(gate.retryAfter));
+      return res.status(429).json({ error: 'too many attempts, try again later' });
+    }
     const { username, password } = req.body || {};
     if (!auth.admin || auth.admin.username !== username || !(await verifyPassword(password, auth.admin))) {
+      loginLimiter.fail(ip);
+      logAuth('login', { ip, username: typeof username === 'string' ? username : null, outcome: 'fail' });
       throw new ApiError(401, 'invalid credentials');
     }
     await issueSession(res, username);
