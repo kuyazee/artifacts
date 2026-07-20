@@ -72,3 +72,9 @@ curl -H "Authorization: Bearer $KEY" https://artifacts.example.com/api/artifacts
 ```
 
 Give CLI and MCP their own least-privilege keys (e.g. `publish`) so a leaked token can't delete or reconfigure, and revoke them individually without disturbing anything else.
+
+The `/api/artifacts*` and `/api/config` routes accept the **admin session cookie as well as** a bearer key — that is how the dashboard calls them without carrying a token in the browser. `/mcp` stays bearer-only.
+
+## Artifact visibility (a third, per-artifact credential)
+
+Separate from admin/keys, each artifact can be `public` (default), `private`, or `password` — see [Visibility](api.md#visibility). Viewing a gated artifact uses neither the admin session nor an API key: the visitor enters a password at the artifact URL, and a correct answer sets a signed, HttpOnly cookie scoped to `Path=/a/<slug>` (7-day expiry) so that one artifact stays unlocked. `private` validates the **admin password**; `password` validates the artifact's own shared password. Rotating or clearing a password does not revoke unlock cookies already issued — they lapse at their 7-day TTL.

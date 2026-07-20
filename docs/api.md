@@ -2,20 +2,21 @@
 
 Full HTTP reference, including zip-site deploys. ([← back to README](../README.md))
 
-All `/api/*` and `/mcp` calls need `Authorization: Bearer <key>` — a scoped [managed key](auth.md) or the bootstrap `ARTIFACTS_API_KEY`. Each write route enforces a minimum scope (below). Reads under `/a/` are public.
+The `/api/artifacts*` and `/api/config` routes accept **either** an `Authorization: Bearer <key>` (a scoped [managed key](auth.md) or the bootstrap `ARTIFACTS_API_KEY`) **or** a valid admin session cookie (how the dashboard calls them). `/mcp` is bearer-only. Each write route enforces a minimum scope (below). Reads under `/a/` are public unless the artifact's [visibility](#visibility) is set.
 
 ```
-POST   /api/artifacts        {content, type: html|jsx|tsx|md, slug?, title?, tags?, project?, expiresAt?, frame?} → 201 {slug, url}   [publish]
+POST   /api/artifacts        {content, type: html|jsx|tsx|md, slug?, title?, tags?, project?, expiresAt?, frame?, visibility?, password?} → 201 {slug, url}   [publish]
 POST   /api/artifacts/zip    raw zip body (?slug=&title=&tags=&project=&expiresAt=) → 201 {slug, url, files}   [publish]
-PUT    /api/artifacts/:slug  {content, type, title?, tags?, project?, expiresAt?, frame?} → {slug, url}   [publish]
-PATCH  /api/artifacts/:slug  {slug?, disabled?, expiresAt?, tags?, project?, frame?} → {slug, url}   [publish]
+PUT    /api/artifacts/:slug  {content, type, title?, tags?, project?, expiresAt?, frame?, visibility?, password?} → {slug, url}   [publish]
+PATCH  /api/artifacts/:slug  {slug?, disabled?, expiresAt?, tags?, project?, frame?, visibility?, password?} → {slug, url}   [publish]
 DELETE /api/artifacts/:slug                                                  → {deleted}   [full]
 GET    /api/artifacts        list (?tag= and/or ?project= to filter)         → [...]   [read]
 GET    /api/config           {frame: {enabled, default}}                     → global frame config   [read]
 PUT    /api/config           {frame: {enabled?, default?}}                   → updated config   [full]
-GET    /a/:slug              rendered artifact, framed when active (public)
-GET    /a/:slug?raw=1        bare artifact without the frame (public)
-GET    /a/:slug/source       original uploaded source, text/plain (public)
+GET    /a/:slug              rendered artifact, framed when active (public unless private/password)
+GET    /a/:slug?raw=1        bare artifact without the frame
+GET    /a/:slug/source       original uploaded source, text/plain
+POST   /a/:slug/unlock       {password} → sets a per-slug unlock cookie (private/password artifacts)
 ```
 
 The `[read|publish|full]` tag on each route is the minimum key scope required (`full` implies `publish` implies `read`). Admin session + managed-key endpoints (`/api/auth/*`, `/api/keys*`) are documented in [Auth & API keys](auth.md).
@@ -38,6 +39,18 @@ Whether an artifact is framed resolves as `config.frame.enabled && (meta.frame ?
 - **Per item**, the `frame` field on `POST` / `PUT` / `PATCH` is `true` (always framed), `false` (never framed), or — via `PATCH {"frame": null}` — cleared so the item inherits the global default.
 
 When the frame is globally disabled or off for an item, `/a/:slug` serves the artifact exactly as `?raw=1` does.
+
+## Visibility
+
+Each artifact has one of three access levels, set with the `visibility` field on `POST` / `PUT` / `PATCH` (and the `set_artifact_visibility` MCP tool / `artifacts visibility` CLI command):
+
+- **`public`** (default, the field omitted) — anyone with the unguessable link views it. Today's behavior.
+- **`private`** — only the operator views it. Every serve path (`/a/:slug`, `?raw=1`, `/source`, zip assets) is gated: sub-resources return `404`; the top-level URL returns an unlock prompt that accepts the **admin password**.
+- **`password`** — the link plus a shared password. `visibility: "password"` requires a `password` field; the top-level URL returns a prompt that accepts that per-artifact password.
+
+The gate is enforced on all serve paths, so `?raw=1`, `/source`, and zip sub-assets never leak a locked artifact's body. A correct password at `POST /a/:slug/unlock` sets an HttpOnly, `Path=/a/<slug>`, 7-day signed cookie, so shared links aren't re-prompted every load; the cookie is scoped to that one slug.
+
+Setting `visibility` to `public` or `private` clears any stored password. Sending `password` alone (while already in password mode) rotates it. The password is stored only as a scrypt hash — `GET /api/artifacts` returns `visibility` and a `hasPassword` boolean, never the hash. Rate-limiting the unlock endpoint is not yet implemented (single-operator scope).
 
 Publish a file:
 

@@ -8,7 +8,7 @@ import AdmZip from 'adm-zip';
 const USAGE = `artifacts — publish to a self-hosted artifacts instance
 
 Usage:
-  artifacts publish <file> [--slug s] [--title t] [--tags a,b] [--project p] [--expires ISO] [--type html|jsx|tsx|md] [--frame on|off]
+  artifacts publish <file> [--slug s] [--title t] [--tags a,b] [--project p] [--expires ISO] [--type html|jsx|tsx|md] [--frame on|off] [--visibility public|private|password] [--password pw]
   artifacts deploy <dir|zip> [--slug s] [--title t] [--tags a,b] [--project p] [--expires ISO]
   artifacts update <slug> <file> [--title t] [--tags a,b] [--project p] [--type html|jsx|tsx|md]
   artifacts list [--tag t] [--project p]
@@ -16,6 +16,7 @@ Usage:
   artifacts disable <slug>
   artifacts enable <slug>
   artifacts frame <slug> <on|off|default>
+  artifacts visibility <slug> <public|private|password> [--password pw]
   artifacts expire <slug> <ISO-date|never>
   artifacts tag <slug> <a,b,c|none>
   artifacts project <slug> <name|none>
@@ -48,6 +49,8 @@ const { values: opts, positionals } = parseArgs({
     scopes: { type: 'string' },
     type: { type: 'string' },
     frame: { type: 'string' },
+    visibility: { type: 'string' },
+    password: { type: 'string' },
     'frame-enabled': { type: 'string' },
     'frame-default': { type: 'string' },
     output: { type: 'string', short: 'o' },
@@ -115,6 +118,9 @@ switch (command) {
     if (opts.frame !== undefined && !['on', 'off', 'default'].includes(opts.frame)) {
       fail('--frame must be on, off, or default');
     }
+    if (opts.visibility !== undefined && !['public', 'private', 'password'].includes(opts.visibility)) {
+      fail('--visibility must be public, private, or password');
+    }
     const content = await fs.readFile(args[0], 'utf8');
     const out = await apiJson('POST', '/api/artifacts', {
       content,
@@ -125,6 +131,8 @@ switch (command) {
       ...(opts.project !== undefined && { project: opts.project }),
       ...(opts.expires && { expiresAt: opts.expires }),
       ...(opts.frame && opts.frame !== 'default' && { frame: opts.frame === 'on' }),
+      ...(opts.visibility !== undefined && { visibility: opts.visibility }),
+      ...(opts.password !== undefined && { password: opts.password }),
     });
     console.log(out.url);
     break;
@@ -165,6 +173,8 @@ switch (command) {
       ...(opts.title && { title: opts.title }),
       ...(opts.tags !== undefined && { tags: opts.tags }),
       ...(opts.project !== undefined && { project: opts.project }),
+      ...(opts.visibility !== undefined && { visibility: opts.visibility }),
+      ...(opts.password !== undefined && { password: opts.password }),
     });
     console.log(out.url);
     break;
@@ -178,7 +188,8 @@ switch (command) {
     const artifacts = await apiJson('GET', `/api/artifacts${qs}`);
     for (const a of artifacts) {
       const frameFlag = a.frame === true ? 'frame:on' : a.frame === false ? 'frame:off' : null;
-      const flags = [a.disabled && 'disabled', frameFlag, a.expiresAt && `expires ${a.expiresAt}`].filter(Boolean);
+      const visFlag = a.visibility === 'private' ? 'private' : a.visibility === 'password' ? 'password' : null;
+      const flags = [a.disabled && 'disabled', visFlag, frameFlag, a.expiresAt && `expires ${a.expiresAt}`].filter(Boolean);
       const project = a.project ? `@${a.project}` : '';
       const tags = a.tags?.length ? `#${a.tags.join(' #')}` : '';
       const meta = [project, tags].filter(Boolean).join(' ');
@@ -210,6 +221,22 @@ switch (command) {
     if (!Object.hasOwn(map, args[1])) fail('frame value must be on, off, or default');
     await apiJson('PATCH', `/api/artifacts/${args[0]}`, { frame: map[args[1]] });
     console.log(`${args[0]} frame ${args[1]}`);
+    break;
+  }
+
+  case 'visibility': {
+    need(2, '<slug> <public|private|password> [--password pw]');
+    if (!['public', 'private', 'password'].includes(args[1])) {
+      fail('visibility must be public, private, or password');
+    }
+    if (args[1] === 'password' && !opts.password) {
+      fail('--password is required when setting visibility to password');
+    }
+    await apiJson('PATCH', `/api/artifacts/${args[0]}`, {
+      visibility: args[1],
+      ...(opts.password !== undefined && { password: opts.password }),
+    });
+    console.log(`${args[0]} visibility ${args[1]}`);
     break;
   }
 

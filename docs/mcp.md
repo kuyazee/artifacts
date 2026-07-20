@@ -10,13 +10,14 @@ Authenticate with a scoped [managed API key](auth.md) (or the bootstrap `ARTIFAC
 
 | Tool | Args | Returns |
 |---|---|---|
-| `publish_artifact` | `content`, `type`, `slug?`, `title?`, `tags?`, `expiresAt?` | public URL |
-| `update_artifact` | `slug`, `content`, `type`, `title?`, `tags?` | public URL |
+| `publish_artifact` | `content`, `type`, `slug?`, `title?`, `tags?`, `expiresAt?`, `visibility?`, `password?` | public URL |
+| `update_artifact` | `slug`, `content`, `type`, `title?`, `tags?`, `visibility?`, `password?` | public URL |
 | `rename_artifact` | `slug`, `newSlug` | new public URL |
 | `disable_artifact` | `slug` | confirmation (URL serves 404, content kept) |
 | `enable_artifact` | `slug` | confirmation |
 | `set_artifact_expiry` | `slug`, `expiresAt` (ISO 8601 or `null` to clear) | confirmation |
 | `set_artifact_tags` | `slug`, `tags` (full list; empty array clears) | confirmation |
+| `set_artifact_visibility` | `slug`, `visibility` (`public`/`private`/`password`), `password?` | confirmation |
 | `list_artifacts` | `tag?` (filter) | JSON list |
 | `delete_artifact` | `slug` | confirmation |
 

@@ -20,13 +20,14 @@ export ARTIFACTS_API_KEY=...
 ## Commands
 
 ```
-artifacts publish <file> [--slug s] [--title t] [--tags a,b] [--project p] [--expires ISO] [--type html|jsx|tsx|md] [--frame on|off]
+artifacts publish <file> [--slug s] [--title t] [--tags a,b] [--project p] [--expires ISO] [--type html|jsx|tsx|md] [--frame on|off] [--visibility public|private|password] [--password pw]
 artifacts deploy <dir|zip> [--slug s] [--title t] [--tags a,b] [--project p] [--expires ISO]
 artifacts update <slug> <file> [--title t] [--tags a,b] [--project p]
 artifacts list [--tag t] [--project p]
 artifacts rename <slug> <new-slug>
 artifacts disable <slug> | enable <slug>
 artifacts frame <slug> <on|off|default>
+artifacts visibility <slug> <public|private|password> [--password pw]
 artifacts expire <slug> <ISO-date|never>
 artifacts tag <slug> <a,b,c|none>
 artifacts project <slug> <name|none>
@@ -56,6 +57,10 @@ Artifacts can render inside a slim top **frame** (title + copy-link + a hide tog
 - **Per item** — `artifacts frame <slug> on|off|default` (`default` clears the override so the item inherits the global default). `publish --frame on|off` sets it at creation time.
 
 Add `?raw=1` to any artifact URL to view it without the frame (this is the URL the frame's iframe loads).
+
+## Visibility
+
+Each artifact is `public` (default), `private` (operator only — the unlock prompt takes the **admin password**), or `password` (a shared password you hand out). Set it at creation with `publish --visibility private` / `--visibility password --password <pw>`, or change it later with `artifacts visibility <slug> <level> [--password pw]`. See [visibility](api.md#visibility) for how the gate and unlock cookie work.
 
 ## Examples
 

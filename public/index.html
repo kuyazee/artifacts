@@ -253,6 +253,7 @@
     border-radius: 5px; padding: 2px 6px; border: 1px solid;
     color: var(--brick); border-color: var(--danger-rim); background: var(--danger-bg);
   }
+  .pill.pill-lock { color: var(--taupe); border-color: var(--rim); background: transparent; }
   .item-title { font-size: 13px; color: var(--taupe); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .item-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
   .time { font-size: 11px; color: var(--taupe-dim); font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; }
@@ -383,6 +384,14 @@
                 <option value="on">frame: on</option>
                 <option value="off">frame: off</option>
               </select>
+            </div>
+            <div class="row">
+              <select id="visibility" title="Who can view this artifact">
+                <option value="public">visibility: public</option>
+                <option value="private">visibility: private</option>
+                <option value="password">visibility: password</option>
+              </select>
+              <input id="password" type="password" placeholder="view password" autocomplete="new-password" style="display:none">
             </div>
             <div class="row">
               <input id="slug" placeholder="custom slug (optional)">
@@ -643,6 +652,11 @@
 
   // ---- paste form ----
 
+  // Show the password box only when visibility is "password".
+  $('visibility').addEventListener('change', () => {
+    $('password').style.display = $('visibility').value === 'password' ? '' : 'none';
+  });
+
   $('publish').addEventListener('click', async () => {
     const body = { content: $('content').value, type: $('type').value };
     if ($('slug').value) body.slug = $('slug').value;
@@ -650,6 +664,11 @@
     if ($('frame').value !== 'default') body.frame = $('frame').value === 'on';
     if ($('tags').value.trim()) body.tags = $('tags').value;
     if ($('project').value.trim()) body.project = $('project').value.trim();
+    if ($('visibility').value !== 'public') body.visibility = $('visibility').value;
+    if ($('visibility').value === 'password') {
+      if (!$('password').value) { addResult('pasted ' + body.type, 'a view password is required', false); return; }
+      body.password = $('password').value;
+    }
     const r = await publish(body);
     if (r.ok) {
       addResult('pasted ' + body.type, r.data.url, true);
@@ -657,6 +676,9 @@
       $('content').value = '';
       $('tags').value = '';
       $('project').value = '';
+      $('password').value = '';
+      $('visibility').value = 'public';
+      $('password').style.display = 'none';
       closePops();
       loadList();
     } else {
@@ -671,8 +693,8 @@
   let inlineN = 8; // how many row actions stay inline before overflowing into ⋯
 
   // Worst-case rendered widths (px) per action, in priority order:
-  // Copy, frame, Tags, Project, Rename, Disable, expiry(dated), Delete.
-  const ACT_W = [58, 96, 56, 74, 76, 74, 130, 66];
+  // Copy, frame, visibility, Tags, Project, Rename, Disable, expiry(dated), Delete.
+  const ACT_W = [58, 96, 104, 56, 74, 76, 74, 130, 66];
 
   // Greedily fit actions inline against the list width using their real widths
   // (the dated "expires …" and "frame: auto" labels are wide), reserving room
@@ -715,9 +737,9 @@
     $('rows').appendChild(empty);
   }
 
-  function pill(text) {
+  function pill(text, variant) {
     const s = document.createElement('span');
-    s.className = 'pill';
+    s.className = variant ? 'pill ' + variant : 'pill';
     s.textContent = text;
     return s;
   }
@@ -827,6 +849,8 @@
       line.appendChild(badge);
       if (a.disabled) line.appendChild(pill('disabled'));
       if (expired) line.appendChild(pill('expired'));
+      if (a.visibility === 'private') line.appendChild(pill('private', 'pill-lock'));
+      if (a.visibility === 'password') line.appendChild(pill('password', 'pill-lock'));
       body.appendChild(line);
 
       // line 2 — title (only when it differs from the slug)
@@ -904,6 +928,29 @@
         loadList();
       });
 
+      const vis = actBtn('', 'vis');
+      const vstate = a.visibility === 'private' ? 'private' : a.visibility === 'password' ? 'password' : 'public';
+      vis.textContent = 'view: ' + vstate;
+      vis.title = 'Change visibility (public → private → password)';
+      vis.addEventListener('click', async () => {
+        // cycle: public -> private -> password -> public
+        const next = vstate === 'public' ? 'private' : vstate === 'private' ? 'password' : 'public';
+        const body = { visibility: next };
+        if (next === 'password') {
+          const pw = prompt('View password for “' + a.slug + '”');
+          if (!pw) return;
+          body.password = pw;
+        }
+        const res = await fetch('/api/artifacts/' + a.slug, {
+          method: 'PATCH', headers: headers(), body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          alert(d.error || 'visibility update failed');
+        }
+        loadList();
+      });
+
       const tagbtn = actBtn('Tags', 'tagbtn');
       tagbtn.addEventListener('click', async () => {
         const v = prompt('Tags for “' + a.slug + '” (comma-separated, empty to clear)',
@@ -969,7 +1016,7 @@
       });
 
       // priority order: earlier actions stay inline; the tail overflows into ⋯
-      const priority = [copy, frm, tagbtn, projBtn, ren, tgl, exp, del];
+      const priority = [copy, frm, vis, tagbtn, projBtn, ren, tgl, exp, del];
       const n = Math.min(inlineN, priority.length);
       priority.forEach((btn, i) => { (i < n ? actions : menu).appendChild(btn); });
       if (n < priority.length) actions.appendChild(more);
