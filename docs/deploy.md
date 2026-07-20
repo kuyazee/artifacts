@@ -196,7 +196,7 @@ Note for Coolify specifically: the `node:22-slim` image has no `curl`/`wget`, so
 
 ## Deployment rule (security)
 
-Uploaded HTML executes on the origin it is served from — that's the product. Serve **artifacts** (`/a/…`) from a **dedicated origin that serves nothing else**. The dashboard/API sets an admin session cookie; keeping artifacts on a separate origin ensures uploaded pages can never ride that cookie to call `/api/*`. Artifact responses themselves never set cookies. See [SECURITY.md](../SECURITY.md) for the full model.
+Uploaded HTML executes on the origin it is served from — that's the product. Serve **artifacts** (`/a/…`) from a **dedicated origin that serves nothing else**. The dashboard/API sets an admin session cookie; keeping artifacts on a separate origin ensures uploaded pages can never ride that cookie to call `/api/*`. Artifact responses never set the dashboard session cookie (the only cookie they set is a slug-scoped unlock cookie for gated artifacts). See [SECURITY.md](../SECURITY.md) for the full model.
 
 ## Rate limiting and the edge
 

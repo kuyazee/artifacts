@@ -41,6 +41,7 @@ It runs as one container with a single admin account and, by default, no databas
 - **Optional viewer frame.** A slim top toolbar (title, copy link, hide) like Claude/Gemini/ChatGPT artifacts — toggle it globally in Settings or per artifact; `?raw=1` always serves the bare content.
 - **Organize by project.** Group artifacts built for the same project into collapsible sections, with a search box across project / title / slug / tags. Tags stay for cross-cutting labels.
 - **Lifecycle controls.** Custom slugs, rename, tags, disable without deleting, auto-expire, delete.
+- **Abuse-resistant.** Login and unlock endpoints are rate-limited per client IP (failures only); password hashing runs off the event loop, so a burst of guesses degrades those two routes instead of stalling the server. Proxy-aware client IP via `TRUST_PROXY` for deployments behind Cloudflare or a reverse proxy — see [deploying](docs/deploy.md#rate-limiting-and-the-edge).
 
 ## Quick start
 
@@ -101,7 +102,7 @@ PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Security in three lines
 
-Uploaded HTML executes — that's the product — so serve artifacts from a dedicated origin that hosts nothing else, keeping them off the dashboard's session cookie. Writes need a scoped API key (bearer); the admin dashboard uses an HttpOnly, SameSite=Strict session. Reads are public but gated by unguessable, non-indexed slugs — don't publish secrets. Full model in [SECURITY.md](SECURITY.md).
+Uploaded HTML executes — that's the product — so serve artifacts from a dedicated origin that hosts nothing else, keeping them off the dashboard's session cookie. Writes need a scoped API key (bearer); the admin dashboard uses an HttpOnly, SameSite=Strict session. Reads are public but gated by unguessable, non-indexed slugs — don't publish secrets. The credential routes (login, unlock) are rate-limited and hash passwords off the event loop; run a CDN/edge limiter in front for volumetric protection. Full model in [SECURITY.md](SECURITY.md).
 
 ## Acknowledgements
 

@@ -63,6 +63,8 @@ artifacts keys revoke <id>
 | `POST` | `/api/auth/logout` | clears the cookie |
 | `POST` | `/api/auth/password` | `{ currentPassword, newPassword }` (logged in) |
 
+`POST /api/auth/login` is rate-limited to 10 failures per 15 minutes per client IP (a `429` with `Retry-After` after that); a successful login never consumes budget. Client-IP resolution honors `TRUST_PROXY` — see [rate limiting and the edge](deploy.md#rate-limiting-and-the-edge).
+
 ## Using a key
 
 Same as before — send it as a bearer token:
@@ -77,4 +79,4 @@ The `/api/artifacts*` and `/api/config` routes accept the **admin session cookie
 
 ## Artifact visibility (a third, per-artifact credential)
 
-Separate from admin/keys, each artifact can be `public` (default), `private`, or `password` — see [Visibility](api.md#visibility). Viewing a gated artifact uses neither the admin session nor an API key: the visitor enters a password at the artifact URL, and a correct answer sets a signed, HttpOnly cookie scoped to `Path=/a/<slug>` (7-day expiry) so that one artifact stays unlocked. `private` validates the **admin password**; `password` validates the artifact's own shared password. Rotating or clearing a password does not revoke unlock cookies already issued — they lapse at their 7-day TTL.
+Separate from admin/keys, each artifact can be `public` (default), `private`, or `password` — see [Visibility](api.md#visibility). Viewing a gated artifact uses neither the admin session nor an API key: the visitor enters a password at the artifact URL, and a correct answer sets a signed, HttpOnly cookie scoped to `Path=/a/<slug>` (7-day expiry) so that one artifact stays unlocked. `private` validates the **admin password**; `password` validates the artifact's own shared password. Rotating or clearing a password does not revoke unlock cookies already issued — they lapse at their 7-day TTL. `POST /a/:slug/unlock` is rate-limited to 10 failures per hour per client IP + slug.
