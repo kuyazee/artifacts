@@ -56,14 +56,18 @@ export async function create() {
 
     async move(oldSlug, newSlug) {
       // Range predicates: all keys under `slug/` satisfy `slug/` <= key < `slug0`.
+      // COLLATE "C" forces byte ordering — the `/` (0x2F) < `0` (0x30) boundary this
+      // relies on only holds under byte order; a locale-aware DB collation (e.g.
+      // en_US.utf8, common in managed Postgres) reorders punctuation and can drop
+      // `slug/meta.json` out of the range, leaving the source rows behind on rename.
       await q(
-        'UPDATE artifacts SET key = $1 || substr(key, $2) WHERE key >= $3 AND key < $4',
+        'UPDATE artifacts SET key = $1 || substr(key, $2) WHERE key COLLATE "C" >= $3 AND key COLLATE "C" < $4',
         [newSlug, oldSlug.length + 1, `${oldSlug}/`, `${oldSlug}0`],
       );
     },
 
     async deleteSlug(slug) {
-      await q('DELETE FROM artifacts WHERE key >= $1 AND key < $2', [`${slug}/`, `${slug}0`]);
+      await q('DELETE FROM artifacts WHERE key COLLATE "C" >= $1 AND key COLLATE "C" < $2', [`${slug}/`, `${slug}0`]);
     },
 
     async init() {

@@ -15,7 +15,7 @@ export ARTIFACTS_URL=https://artifacts.example.com
 export ARTIFACTS_API_KEY=...
 ```
 
-`--url` and `--key` flags override the env vars per invocation.
+`--url` and `--key` flags override the env vars per invocation. `--key` accepts a scoped [managed key](auth.md) or the bootstrap `ARTIFACTS_API_KEY`; the `keys` subcommands below require the bootstrap admin key.
 
 ## Commands
 
@@ -33,9 +33,16 @@ artifacts project <slug> <name|none>
 artifacts delete <slug>
 artifacts source <slug> [-o file]
 artifacts config [--frame-enabled true|false] [--frame-default true|false]
+artifacts keys list
+artifacts keys create <name> [--scopes read,publish,full] [--expires ISO]
+artifacts keys revoke <id>
 ```
 
 Type is inferred from the file extension (`.html`, `.jsx`, `.tsx`, `.md`); pass `--type` to override. `deploy` zips a directory for you and posts it to the zip endpoint. `tag` replaces an artifact's tags (`none` clears them); `list --tag` shows only artifacts carrying that tag.
+
+## API keys
+
+Mint scoped bearer tokens for CLI/MCP clients instead of sharing the bootstrap key. `keys create` prints the full token once (store it) — the server keeps only a hash. `--scopes` defaults to `publish`. See [Auth & API keys](auth.md).
 
 ## Projects
 

@@ -96,6 +96,269 @@ async function updateConfig(patch) {
   return config;
 }
 
+// ---------------------------------------------------------------------------
+// Auth — one admin account (session login for the dashboard) plus managed API
+// keys (scoped bearer tokens for CLI / MCP). Both live under a reserved key,
+// exactly like config.json above, so they persist across a fresh-container
+// restart on every backend (local/s3/git/postgres/sqlite) with no schema or
+// migration. The bootstrap ARTIFACTS_API_KEY stays valid as an all-scope
+// break-glass admin bearer alongside the managed keys.
+// ---------------------------------------------------------------------------
+
+const AUTH_KEY = 'auth.json';
+const SCOPES = ['read', 'publish', 'full'];
+// full implies publish implies read — a caller's effective level is its highest scope.
+const SCOPE_RANK = { read: 0, publish: 1, full: 2 };
+const SESSION_COOKIE = 'artifacts_session';
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+// lastUsedAt is best-effort telemetry, not audit — throttle the write so a busy
+// key does not commit+push on the git backend (or hammer SQL) on every request.
+// On multi-replica deploys each replica throttles independently; the value is
+// therefore approximate, which is fine for "when was this key last seen".
+const LASTUSED_THROTTLE_MS = 5 * 60 * 1000;
+const USERNAME_RE = /^[a-zA-Z0-9._-]{3,32}$/;
+
+const ADMIN_USERNAME = process.env.ARTIFACTS_ADMIN_USERNAME;
+const ADMIN_PASSWORD = process.env.ARTIFACTS_ADMIN_PASSWORD;
+
+async function loadAuth() {
+  const buf = await storage.getBuffer(AUTH_KEY);
+  if (!buf) return { version: 1, admin: null, sessionSecret: null, keys: [] };
+  try {
+    const raw = JSON.parse(buf.toString('utf8'));
+    return {
+      version: 1,
+      admin: raw.admin || null,
+      sessionSecret: raw.sessionSecret || null,
+      keys: Array.isArray(raw.keys) ? raw.keys : [],
+    };
+  } catch {
+    return { version: 1, admin: null, sessionSecret: null, keys: [] };
+  }
+}
+
+let auth = await loadAuth();
+
+// Seed the single admin account from env on first boot (skips the setup screen).
+// Like config.json, auth.json is otherwise created lazily — never written on a
+// plain boot with nothing to persist.
+if (!auth.admin && ADMIN_USERNAME && ADMIN_PASSWORD) {
+  auth.admin = { username: ADMIN_USERNAME, ...hashPassword(ADMIN_PASSWORD) };
+  await saveAuth();
+  console.log(`admin account "${ADMIN_USERNAME}" created from env`);
+}
+
+async function saveAuth() {
+  await storage.put(AUTH_KEY, JSON.stringify(auth, null, 2), { contentType: 'application/json' });
+  await storage.flush?.();
+}
+
+// The HMAC secret that signs session cookies — generated + persisted the first
+// time a session is issued, never baked into a boot-time write.
+async function ensureSessionSecret() {
+  if (!auth.sessionSecret) {
+    auth.sessionSecret = crypto.randomBytes(32).toString('hex');
+    await saveAuth();
+  }
+  return auth.sessionSecret;
+}
+
+// Passwords: scrypt (built-in, memory-hard). Keys: sha256 — API keys are already
+// 24 bytes of entropy, so a fast hash is safe and keeps lookup constant-time.
+function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
+  return { salt, passwordHash: crypto.scryptSync(password, salt, 64).toString('hex') };
+}
+
+function verifyPassword(password, admin) {
+  if (typeof password !== 'string' || !admin?.passwordHash || !admin?.salt) return false;
+  const hash = crypto.scryptSync(password, admin.salt, 64);
+  const stored = Buffer.from(admin.passwordHash, 'hex');
+  return hash.length === stored.length && crypto.timingSafeEqual(hash, stored);
+}
+
+function hashKey(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+// Session cookie = base64url(payload).HMAC(payload). Stateless; revocation of the
+// admin session is by rotating sessionSecret (password change keeps it, by design).
+function signSession(payload, secret) {
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const sig = crypto.createHmac('sha256', secret).update(body).digest('base64url');
+  return `${body}.${sig}`;
+}
+
+function verifySession(token, secret) {
+  if (!token || !secret) return null;
+  const dot = token.indexOf('.');
+  if (dot === -1) return null;
+  const body = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  const expected = crypto.createHmac('sha256', secret).update(body).digest('base64url');
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  try {
+    return JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function readCookie(req, name) {
+  const header = req.headers.cookie || '';
+  for (const part of header.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx === -1) continue;
+    if (part.slice(0, idx).trim() === name) return decodeURIComponent(part.slice(idx + 1).trim());
+  }
+  return null;
+}
+
+async function issueSession(res, username) {
+  const secret = await ensureSessionSecret();
+  const token = signSession({ sub: username, exp: Date.now() + SESSION_TTL_MS }, secret);
+  res.cookie(SESSION_COOKIE, token, {
+    httpOnly: true,
+    secure: BASE_URL.startsWith('https'),
+    sameSite: 'strict',
+    maxAge: SESSION_TTL_MS,
+    path: '/',
+  });
+}
+
+// Resolve a valid admin session cookie to a principal, or null.
+function sessionPrincipal(req) {
+  const payload = verifySession(readCookie(req, SESSION_COOKIE), auth.sessionSecret);
+  if (!payload) return null;
+  if (typeof payload.exp === 'number' && payload.exp <= Date.now()) return null;
+  if (!auth.admin || payload.sub !== auth.admin.username) return null;
+  return { admin: true, scopes: SCOPES, session: true };
+}
+
+function hasScope(scopes, required) {
+  const rank = Math.max(-1, ...scopes.map((s) => SCOPE_RANK[s] ?? -1));
+  return rank >= SCOPE_RANK[required];
+}
+
+// Bootstrap key = all-scope admin bearer; else a managed key matched by sha256,
+// rejected if disabled or expired. Returns the principal (with the mutable key
+// record, for lastUsedAt) or null.
+function resolveApiKey(token) {
+  if (!token) return null;
+  const a = Buffer.from(token);
+  const b = Buffer.from(API_KEY);
+  if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
+    return { admin: true, scopes: SCOPES, keyId: null, key: null };
+  }
+  const h = Buffer.from(hashKey(token));
+  for (const key of auth.keys) {
+    if (key.disabled) continue;
+    const kh = Buffer.from(key.hash);
+    if (kh.length !== h.length || !crypto.timingSafeEqual(kh, h)) continue;
+    if (key.expiresAt && Date.parse(key.expiresAt) <= Date.now()) return null;
+    return { admin: false, scopes: key.scopes, keyId: key.id, key };
+  }
+  return null;
+}
+
+function touchKey(key) {
+  if (!key) return;
+  const now = Date.now();
+  const last = key.lastUsedAt ? Date.parse(key.lastUsedAt) : 0;
+  if (now - last < LASTUSED_THROTTLE_MS) return;
+  key.lastUsedAt = new Date(now).toISOString();
+  saveAuth().catch((err) => console.error('lastUsedAt persist failed:', err));
+}
+
+// Machine callers (REST / CLI / MCP): Bearer token meeting a minimum scope.
+function requireApiKey(scope) {
+  return (req, res, next) => {
+    const header = req.headers.authorization || '';
+    const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+    const principal = resolveApiKey(token);
+    if (!principal) return res.status(401).json({ error: 'unauthorized' });
+    if (!hasScope(principal.scopes, scope)) {
+      return res.status(403).json({ error: `forbidden: requires "${scope}" scope` });
+    }
+    req.principal = principal;
+    touchKey(principal.key);
+    next();
+  };
+}
+
+// Dashboard-only endpoints: a valid admin session cookie.
+function requireSession(req, res, next) {
+  const principal = sessionPrincipal(req);
+  if (!principal) return res.status(401).json({ error: 'unauthorized' });
+  req.principal = principal;
+  next();
+}
+
+// Key-management endpoints: admin session cookie OR the bootstrap admin bearer
+// (so the CLI can mint keys). Managed keys — even full-scope — cannot manage keys.
+function requireAdmin(req, res, next) {
+  const session = sessionPrincipal(req);
+  if (session) {
+    req.principal = session;
+    return next();
+  }
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+  const a = Buffer.from(token);
+  const b = Buffer.from(API_KEY);
+  if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
+    req.principal = { admin: true, scopes: SCOPES, keyId: null };
+    return next();
+  }
+  return res.status(401).json({ error: 'unauthorized' });
+}
+
+function publicKey(k) {
+  return {
+    id: k.id,
+    name: k.name,
+    prefix: k.prefix,
+    scopes: k.scopes,
+    createdAt: k.createdAt,
+    expiresAt: k.expiresAt ?? null,
+    lastUsedAt: k.lastUsedAt ?? null,
+    disabled: !!k.disabled,
+  };
+}
+
+function validatePassword(pw) {
+  if (typeof pw !== 'string' || pw.length < 8) {
+    throw new ApiError(400, 'password must be at least 8 characters');
+  }
+}
+
+function validateCredentials(username, password) {
+  if (typeof username !== 'string' || !USERNAME_RE.test(username)) {
+    throw new ApiError(400, 'username must be 3-32 chars [a-zA-Z0-9._-]');
+  }
+  validatePassword(password);
+}
+
+function parseKeyInput(name, scopes, expiresAt) {
+  if (typeof name !== 'string' || !name.trim() || name.trim().length > 64) {
+    throw new ApiError(400, 'name (1-64 chars) is required');
+  }
+  let list = scopes;
+  if (typeof list === 'string') list = [list];
+  if (!Array.isArray(list) || !list.length) list = ['publish'];
+  for (const s of list) {
+    if (!SCOPES.includes(s)) throw new ApiError(400, `invalid scope "${s}" (read|publish|full)`);
+  }
+  let exp = null;
+  if (expiresAt !== undefined && expiresAt !== null && expiresAt !== '') {
+    const t = Date.parse(expiresAt);
+    if (Number.isNaN(t)) throw new ApiError(400, 'expiresAt must be an ISO 8601 date string');
+    exp = new Date(t).toISOString();
+  }
+  return { name: name.trim(), scopes: list, expiresAt: exp };
+}
+
 // Whether the viewer frame is shown for this artifact: global master switch
 // AND (per-item override, or the global default when the item has no override).
 function frameActive(meta) {
@@ -527,17 +790,6 @@ app.use((req, res, next) => {
   next();
 });
 
-function requireAuth(req, res, next) {
-  const header = req.headers.authorization || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : '';
-  const a = Buffer.from(token);
-  const b = Buffer.from(API_KEY);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-    return res.status(401).json({ error: 'unauthorized' });
-  }
-  next();
-}
-
 const ARTIFACT_CSP = [
   "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:",
   'https://esm.sh https://cdn.tailwindcss.com https://cdnjs.cloudflare.com',
@@ -740,7 +992,7 @@ app.get('/a/:slug/*', async (req, res) => {
   serveObject(req, res, key);
 });
 
-app.post('/api/artifacts', requireAuth, async (req, res, next) => {
+app.post('/api/artifacts', requireApiKey('publish'), async (req, res, next) => {
   try {
     res.status(201).json(await saveArtifact(req.body));
   } catch (err) {
@@ -753,7 +1005,7 @@ const zipBody = express.raw({
   limit: '50mb',
 });
 
-app.post('/api/artifacts/zip', requireAuth, zipBody, async (req, res, next) => {
+app.post('/api/artifacts/zip', requireApiKey('publish'), zipBody, async (req, res, next) => {
   try {
     if (!Buffer.isBuffer(req.body) || !req.body.length) {
       throw new ApiError(400, 'raw zip body required (Content-Type: application/zip)');
@@ -765,7 +1017,7 @@ app.post('/api/artifacts/zip', requireAuth, zipBody, async (req, res, next) => {
   }
 });
 
-app.put('/api/artifacts/:slug', requireAuth, async (req, res, next) => {
+app.put('/api/artifacts/:slug', requireApiKey('publish'), async (req, res, next) => {
   try {
     res.json(await saveArtifact({ ...req.body, slug: req.params.slug }, { replace: true }));
   } catch (err) {
@@ -773,7 +1025,7 @@ app.put('/api/artifacts/:slug', requireAuth, async (req, res, next) => {
   }
 });
 
-app.patch('/api/artifacts/:slug', requireAuth, async (req, res, next) => {
+app.patch('/api/artifacts/:slug', requireApiKey('publish'), async (req, res, next) => {
   try {
     res.json(await patchArtifact(req.params.slug, req.body));
   } catch (err) {
@@ -781,7 +1033,7 @@ app.patch('/api/artifacts/:slug', requireAuth, async (req, res, next) => {
   }
 });
 
-app.delete('/api/artifacts/:slug', requireAuth, async (req, res, next) => {
+app.delete('/api/artifacts/:slug', requireApiKey('full'), async (req, res, next) => {
   try {
     await deleteArtifact(req.params.slug);
     res.json({ deleted: req.params.slug });
@@ -790,7 +1042,7 @@ app.delete('/api/artifacts/:slug', requireAuth, async (req, res, next) => {
   }
 });
 
-app.get('/api/artifacts', requireAuth, async (req, res, next) => {
+app.get('/api/artifacts', requireApiKey('read'), async (req, res, next) => {
   try {
     const { tag, project } = req.query;
     const opts = {};
@@ -802,13 +1054,125 @@ app.get('/api/artifacts', requireAuth, async (req, res, next) => {
   }
 });
 
-app.get('/api/config', requireAuth, (req, res) => {
+app.get('/api/config', requireApiKey('read'), (req, res) => {
   res.json(config);
 });
 
-app.put('/api/config', requireAuth, async (req, res, next) => {
+app.put('/api/config', requireApiKey('full'), async (req, res, next) => {
   try {
     res.json(await updateConfig(req.body));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Auth — admin session (dashboard) + managed API keys (CLI / MCP)
+// ---------------------------------------------------------------------------
+
+// Drives the dashboard's first-run vs login screen. Unauthenticated by design.
+app.get('/api/auth/session', (req, res) => {
+  res.json({ authenticated: !!sessionPrincipal(req), needsSetup: !auth.admin });
+});
+
+// One-time admin creation: allowed only while no admin exists.
+app.post('/api/auth/setup', async (req, res, next) => {
+  try {
+    if (auth.admin) throw new ApiError(409, 'admin account already exists');
+    const { username, password } = req.body || {};
+    validateCredentials(username, password);
+    auth.admin = { username, ...hashPassword(password) };
+    await ensureSessionSecret();
+    await saveAuth();
+    await issueSession(res, username);
+    res.status(201).json({ username });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/auth/login', async (req, res, next) => {
+  try {
+    const { username, password } = req.body || {};
+    if (!auth.admin || auth.admin.username !== username || !verifyPassword(password, auth.admin)) {
+      throw new ApiError(401, 'invalid credentials');
+    }
+    await issueSession(res, username);
+    res.json({ username });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  res.clearCookie(SESSION_COOKIE, { path: '/' });
+  res.json({ ok: true });
+});
+
+app.post('/api/auth/password', requireSession, async (req, res, next) => {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+    if (!verifyPassword(currentPassword, auth.admin)) {
+      throw new ApiError(401, 'current password incorrect');
+    }
+    validatePassword(newPassword);
+    auth.admin = { username: auth.admin.username, ...hashPassword(newPassword) };
+    await saveAuth();
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Managed API keys — admin session or bootstrap admin bearer only.
+app.get('/api/keys', requireAdmin, (req, res) => {
+  res.json(auth.keys.map(publicKey));
+});
+
+app.post('/api/keys', requireAdmin, async (req, res, next) => {
+  try {
+    const { name, scopes, expiresAt } = req.body || {};
+    const parsed = parseKeyInput(name, scopes, expiresAt);
+    const token = 'ah_' + crypto.randomBytes(24).toString('hex');
+    const record = {
+      id: nanoid(),
+      name: parsed.name,
+      hash: hashKey(token),
+      prefix: token.slice(0, 11), // 'ah_' + first 8 hex chars, for display
+      scopes: parsed.scopes,
+      createdAt: new Date().toISOString(),
+      expiresAt: parsed.expiresAt,
+      lastUsedAt: null,
+      disabled: false,
+    };
+    auth.keys.push(record);
+    await saveAuth();
+    // The full token is shown once, here, and never stored in the clear.
+    res.status(201).json({ ...publicKey(record), key: token });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.patch('/api/keys/:id', requireAdmin, async (req, res, next) => {
+  try {
+    const key = auth.keys.find((k) => k.id === req.params.id);
+    if (!key) throw new ApiError(404, 'key not found');
+    if (typeof req.body?.disabled === 'boolean') key.disabled = req.body.disabled;
+    await saveAuth();
+    res.json(publicKey(key));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/api/keys/:id', requireAdmin, async (req, res, next) => {
+  try {
+    const idx = auth.keys.findIndex((k) => k.id === req.params.id);
+    if (idx === -1) throw new ApiError(404, 'key not found');
+    auth.keys.splice(idx, 1);
+    await saveAuth();
+    res.json({ deleted: req.params.id });
   } catch (err) {
     next(err);
   }
@@ -818,8 +1182,17 @@ app.put('/api/config', requireAuth, async (req, res, next) => {
 // MCP (streamable HTTP, stateless)
 // ---------------------------------------------------------------------------
 
-function createMcpServer() {
+function createMcpServer(scopes = SCOPES) {
   const server = new McpServer({ name: 'artifacts-host', version: '1.0.0' });
+
+  // Per-tool scope gate — the key that authenticated /mcp carries a scope; a
+  // read-only key can list but not mutate, delete needs full. A thrown Error
+  // surfaces to the client as the tool-call error.
+  const requireScope = (needed) => {
+    if (!hasScope(scopes, needed)) {
+      throw new Error(`this API key lacks the "${needed}" scope required for this tool`);
+    }
+  };
 
   server.registerTool(
     'publish_artifact',
@@ -851,6 +1224,7 @@ function createMcpServer() {
       },
     },
     async (args) => {
+      requireScope('publish');
       const { url } = await saveArtifact(args);
       return { content: [{ type: 'text', text: url }] };
     },
@@ -881,6 +1255,7 @@ function createMcpServer() {
       },
     },
     async (args) => {
+      requireScope('publish');
       const { url } = await saveArtifact(args, { replace: true });
       return { content: [{ type: 'text', text: url }] };
     },
@@ -897,6 +1272,7 @@ function createMcpServer() {
       },
     },
     async ({ slug, newSlug }) => {
+      requireScope('publish');
       const { url } = await patchArtifact(slug, { slug: newSlug });
       return { content: [{ type: 'text', text: url }] };
     },
@@ -917,6 +1293,7 @@ function createMcpServer() {
       },
     },
     async ({ slug, expiresAt }) => {
+      requireScope('publish');
       await patchArtifact(slug, { expiresAt });
       const text = expiresAt ? `${slug} expires ${expiresAt}` : `expiry cleared for ${slug}`;
       return { content: [{ type: 'text', text }] };
@@ -935,6 +1312,7 @@ function createMcpServer() {
       },
     },
     async ({ slug, tags }) => {
+      requireScope('publish');
       await patchArtifact(slug, { tags });
       const text = tags.length ? `${slug} tagged: ${tags.join(', ')}` : `tags cleared for ${slug}`;
       return { content: [{ type: 'text', text }] };
@@ -953,6 +1331,7 @@ function createMcpServer() {
       },
     },
     async ({ slug, project }) => {
+      requireScope('publish');
       await patchArtifact(slug, { project });
       const text = project.trim() ? `${slug} → project “${project.trim()}”` : `project cleared for ${slug}`;
       return { content: [{ type: 'text', text }] };
@@ -968,6 +1347,7 @@ function createMcpServer() {
       inputSchema: { slug: z.string() },
     },
     async ({ slug }) => {
+      requireScope('publish');
       await patchArtifact(slug, { disabled: true });
       return { content: [{ type: 'text', text: `disabled ${slug}` }] };
     },
@@ -981,6 +1361,7 @@ function createMcpServer() {
       inputSchema: { slug: z.string() },
     },
     async ({ slug }) => {
+      requireScope('publish');
       await patchArtifact(slug, { disabled: false });
       return { content: [{ type: 'text', text: `enabled ${slug}` }] };
     },
@@ -1001,6 +1382,7 @@ function createMcpServer() {
       },
     },
     async ({ slug, frame }) => {
+      requireScope('publish');
       await patchArtifact(slug, { frame });
       const text =
         frame === null ? `frame reset to default for ${slug}` : `frame ${frame ? 'on' : 'off'} for ${slug}`;
@@ -1020,6 +1402,7 @@ function createMcpServer() {
       },
     },
     async ({ tag, project }) => {
+      requireScope('read');
       const opts = {};
       if (tag) opts.tag = tag;
       if (project) opts.project = project;
@@ -1036,6 +1419,7 @@ function createMcpServer() {
       inputSchema: { slug: z.string() },
     },
     async ({ slug }) => {
+      requireScope('full');
       await deleteArtifact(slug);
       return { content: [{ type: 'text', text: `deleted ${slug}` }] };
     },
@@ -1044,9 +1428,9 @@ function createMcpServer() {
   return server;
 }
 
-app.post('/mcp', requireAuth, async (req, res) => {
+app.post('/mcp', requireApiKey('read'), async (req, res) => {
   try {
-    const server = createMcpServer();
+    const server = createMcpServer(req.principal.scopes);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on('close', () => {
       transport.close();

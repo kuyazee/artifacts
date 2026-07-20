@@ -22,10 +22,16 @@ Usage:
   artifacts delete <slug>
   artifacts source <slug> [-o file]
   artifacts config [--frame-enabled true|false] [--frame-default true|false]
+  artifacts keys list
+  artifacts keys create <name> [--scopes read,publish,full] [--expires ISO]
+  artifacts keys revoke <id>
 
 Connection (flags override env):
   --url   server origin        [env: ARTIFACTS_URL]
-  --key   write API key        [env: ARTIFACTS_API_KEY]`;
+  --key   API key              [env: ARTIFACTS_API_KEY]
+
+The key can be a managed key (scoped) or the bootstrap ARTIFACTS_API_KEY.
+Minting keys (keys create/list/revoke) requires the bootstrap admin key.`;
 
 const EXT_TYPES = { '.html': 'html', '.htm': 'html', '.jsx': 'jsx', '.tsx': 'tsx', '.md': 'md', '.markdown': 'md' };
 
@@ -39,6 +45,7 @@ const { values: opts, positionals } = parseArgs({
     tag: { type: 'string' },
     project: { type: 'string' },
     expires: { type: 'string' },
+    scopes: { type: 'string' },
     type: { type: 'string' },
     frame: { type: 'string' },
     'frame-enabled': { type: 'string' },
@@ -245,6 +252,40 @@ switch (command) {
     need(1, '<slug>');
     await apiJson('DELETE', `/api/artifacts/${args[0]}`);
     console.log(`${args[0]} deleted`);
+    break;
+  }
+
+  case 'keys': {
+    const sub = args[0];
+    if (sub === 'list') {
+      const keys = await apiJson('GET', '/api/keys');
+      for (const k of keys) {
+        const flags = [
+          k.disabled && 'disabled',
+          k.expiresAt && `expires ${k.expiresAt.slice(0, 10)}`,
+          k.lastUsedAt ? `used ${k.lastUsedAt.slice(0, 10)}` : 'never used',
+        ].filter(Boolean);
+        console.log(`${k.id}\t${k.name}\t${k.scopes.join('/')}\t${k.prefix}…\t[${flags.join(', ')}]`);
+      }
+    } else if (sub === 'create') {
+      if (!args[1]) fail('usage: artifacts keys create <name> [--scopes read,publish,full] [--expires ISO]');
+      const scopes = opts.scopes
+        ? opts.scopes.split(',').map((s) => s.trim()).filter(Boolean)
+        : undefined;
+      const out = await apiJson('POST', '/api/keys', {
+        name: args[1],
+        ...(scopes && { scopes }),
+        ...(opts.expires && { expiresAt: opts.expires }),
+      });
+      // The full token is printed once — store it now, it is not recoverable.
+      console.log(out.key);
+    } else if (sub === 'revoke') {
+      if (!args[1]) fail('usage: artifacts keys revoke <id>');
+      await apiJson('DELETE', `/api/keys/${args[1]}`);
+      console.log(`${args[1]} revoked`);
+    } else {
+      fail('usage: artifacts keys <list|create|revoke>');
+    }
     break;
   }
 

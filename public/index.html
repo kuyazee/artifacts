@@ -56,11 +56,6 @@
     font-family: inherit; cursor: pointer; transition: background .12s;
   }
   button:hover { background: var(--cream-hi); }
-  button.ghost {
-    padding: 7px 14px; background: transparent; border: 1px solid var(--rim);
-    color: var(--taupe); font-size: 13px; font-weight: 500;
-  }
-  button.ghost:hover { color: var(--sand); border-color: var(--taupe); background: transparent; }
 
   /* palmette mark — rose leaf, cream stem (echoes the Ibiza print) */
   .mark { display: block; }
@@ -116,28 +111,105 @@
   .result .msg { flex: 1; color: var(--brick); }
   .result button { padding: 5px 11px; font-size: 12px; }
 
-  details { margin-top: 22px; border-top: 1px solid var(--rim-soft); padding-top: 16px; }
-  summary { cursor: pointer; color: var(--taupe); font-size: 13px; font-weight: 500; user-select: none; list-style: none; }
-  summary::-webkit-details-marker { display: none; }
-  summary::before { content: "›"; color: var(--taupe-dim); display: inline-block; width: 14px; }
-  details[open] summary::before { content: "⌄"; }
-  .paste-form { margin-top: 14px; display: flex; flex-direction: column; gap: 10px; }
-  .paste-form .row { display: flex; gap: 10px; flex-wrap: wrap; }
-  .paste-form .row > * { flex: 1; min-width: 120px; }
-  .paste-form textarea { min-height: 220px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
-  .paste-form button { align-self: flex-start; }
+  /* ---- app bar actions ---- */
+  .bar-actions { display: flex; align-items: center; gap: 6px; position: relative; }
+  .iconbtn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+    height: 38px; min-width: 38px; padding: 0 9px;
+    background: transparent; border: 1px solid var(--rim); border-radius: 9px;
+    color: var(--taupe); cursor: pointer; transition: color .12s, border-color .12s, background .12s, transform .06s;
+  }
+  .iconbtn:hover { color: var(--sand); border-color: var(--taupe); }
+  .iconbtn:active { transform: translateY(1px); }
+  .iconbtn .ic { width: 18px; height: 18px; stroke: currentColor; stroke-width: 1.75; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+  .iconbtn.primary { color: var(--cream); }
+  .iconbtn.primary:hover { background: var(--rose-tint); border-color: var(--rose); color: var(--cream); }
+  .iconbtn .label { font-size: 13px; font-weight: 600; padding-right: 3px; }
+  .iconbtn.on { color: var(--cream); border-color: var(--rose); background: var(--rose-tint); }
+  @media (max-width: 560px) { .iconbtn .label { display: none; } .iconbtn.primary { padding: 0 9px; } }
 
-  #list { margin-top: 34px; }
+  /* ---- anchored dropdown popover ---- */
+  .scrim { position: fixed; inset: 0; z-index: 40; background: transparent; visibility: hidden; }
+  .scrim.open { visibility: visible; }
+  .popover {
+    position: absolute; top: calc(100% + 10px); right: 0; z-index: 50;
+    width: 300px; transform-origin: top right;
+    background: var(--cocoa-hi); border: 1px solid var(--rim); border-radius: 14px;
+    box-shadow: 0 26px 60px -28px #000, 0 2px 0 rgba(0,0,0,.2);
+    opacity: 0; transform: translateY(-6px) scale(.98); pointer-events: none;
+    transition: opacity .14s ease, transform .14s cubic-bezier(.32,.72,0,1);
+  }
+  .popover.open { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+  .popover::before {
+    content: ""; position: absolute; top: -6px; width: 11px; height: 11px;
+    background: var(--cocoa-hi); border-left: 1px solid var(--rim); border-top: 1px solid var(--rim);
+    transform: rotate(45deg);
+  }
+  #composePop { width: 440px; }
+  #keysPop { width: 360px; }
+  #composePop::before { right: 84px; }
+  #settingsPop::before { right: 84px; }
+  #keysPop::before { right: 47px; }
+  @media (max-width: 480px) {
+    .popover, #composePop { position: fixed; top: 74px; right: 12px; left: 12px; width: auto; }
+    .popover::before { display: none; }
+  }
+  .pop-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 10px; }
+  .pop-head h3 { margin: 0; font-size: 13px; font-weight: 700; color: var(--cream); letter-spacing: .01em; }
+  .pop-head .hint { font-size: 11px; color: var(--taupe-dim); }
+  .pop-body { padding: 4px 16px 16px; }
+
+  .form { display: flex; flex-direction: column; gap: 12px; }
+  .form .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .form .row > * { flex: 1; min-width: 120px; }
+  .form textarea { min-height: 150px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; resize: vertical; }
+  .form .browse { font-size: 12px; color: var(--taupe-dim); text-align: center; padding: 2px 0; }
+  .form .foot { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 2px; }
+
+  .settings { display: flex; flex-direction: column; gap: 14px; }
+  .settings label.check { display: flex; align-items: flex-start; gap: 10px; font-size: 14px; color: var(--sand); cursor: pointer; }
+  .settings .desc { color: var(--taupe-dim); font-size: 12px; display: block; margin-top: 2px; }
+  .settings input[type=checkbox] { width: 16px; height: 16px; margin-top: 2px; accent-color: var(--rose); cursor: pointer; }
+  .settings .foot { display: flex; align-items: center; gap: 12px; margin-top: 2px; }
+  .saved { color: var(--rose); font-size: 13px; }
+
+  /* ---- api keys panel ---- */
+  .keys { display: flex; flex-direction: column; gap: 14px; }
+  .keys .form { gap: 10px; }
+  .keys .scopes { display: flex; gap: 16px; padding: 2px 0; }
+  .keys .scopes label.check { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--sand); cursor: pointer; }
+  .keys .scopes input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--rose); cursor: pointer; }
+  .key-reveal {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; word-break: break-all;
+    background: var(--field); border: 1px solid var(--rose); border-radius: 8px; padding: 10px; color: var(--cream-hi);
+  }
+  .key-list { display: flex; flex-direction: column; gap: 8px; max-height: 260px; overflow: auto; }
+  .key-row {
+    display: flex; align-items: center; gap: 8px; justify-content: space-between;
+    padding: 9px 11px; border: 1px solid var(--rim-soft); border-radius: 9px; background: var(--cocoa);
+  }
+  .key-row.off { opacity: .55; }
+  .key-row .kmeta { min-width: 0; }
+  .key-row .kname { font-size: 13px; font-weight: 600; color: var(--sand); }
+  .key-row.off .kname { text-decoration: line-through; }
+  .key-row .ksub { font-size: 11px; color: var(--taupe-dim); font-family: ui-monospace, Menlo, monospace; margin-top: 2px; word-break: break-all; }
+  .key-row .kacts { display: flex; gap: 4px; flex: none; }
+
+  /* ---- search reveal (under the app bar) ---- */
+  .searchbar {
+    display: grid; grid-template-rows: 0fr; overflow: hidden; opacity: 0; margin-bottom: 0;
+    transition: grid-template-rows .18s ease, margin .18s ease, opacity .18s ease;
+  }
+  .searchbar.open { grid-template-rows: 1fr; opacity: 1; margin-bottom: 18px; }
+  .searchbar > div { min-height: 0; }
+  .search-field { position: relative; }
+  .search-field .ic { position: absolute; left: 13px; top: 50%; transform: translateY(-50%); width: 17px; height: 17px; stroke: var(--taupe-dim); stroke-width: 1.75; fill: none; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+  .search-field input { width: 100%; padding-left: 40px; }
+
+  #list { margin-top: 30px; }
   .section-head { display: flex; align-items: baseline; gap: 10px; margin: 0 0 14px; }
   .section-head h2 { font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--taupe); margin: 0; }
   .count { font-size: 12px; color: var(--taupe-dim); font-variant-numeric: tabular-nums; }
-
-  .search {
-    width: 100%; margin: 0 0 16px; padding: 10px 13px;
-    background: var(--field); border: 1px solid var(--rim); border-radius: 9px;
-    color: var(--sand); font-size: 14px;
-  }
-  .search::placeholder { color: var(--taupe-dim); }
 
   .group { margin: 0; }
   .group-head {
@@ -224,13 +296,6 @@
 
   .empty { padding: 26px; text-align: center; color: var(--taupe-dim); font-size: 13px; border: 1px dashed var(--rim-soft); border-radius: 12px; }
 
-  .settings-form { margin-top: 14px; display: flex; flex-direction: column; gap: 14px; }
-  .settings-form label { display: flex; align-items: flex-start; gap: 10px; font-size: 14px; color: var(--sand); cursor: pointer; }
-  .settings-form label .desc { color: var(--taupe-dim); font-size: 12px; }
-  .settings-form input[type=checkbox] { width: 16px; height: 16px; margin-top: 1px; accent-color: var(--rose); cursor: pointer; }
-  .settings-form .save-row { display: flex; align-items: center; gap: 12px; }
-  .settings-form .saved { color: var(--rose); font-size: 13px; }
-
   @media (max-width: 560px) {
     .item { flex-direction: column; align-items: stretch; gap: 10px; }
     .item-actions { justify-content: flex-start; opacity: 1; }
@@ -255,9 +320,10 @@
       <path class="stem" d="M12 12.5V22"></path>
     </svg>
     <h1>artifacts</h1>
-    <p>Enter your API key to unlock</p>
-    <input id="lockKey" type="password" placeholder="API key" autofocus>
-    <button id="unlock">Unlock</button>
+    <p id="lockSub">Sign in</p>
+    <input id="lockUser" type="text" placeholder="Username" autocomplete="username" autofocus>
+    <input id="lockPass" type="password" placeholder="Password" autocomplete="current-password">
+    <button id="lockSubmit">Sign in</button>
     <div id="lockError"></div>
   </div>
 </div>
@@ -280,8 +346,108 @@
         <span class="tagline">drop, publish, share</span>
       </div>
     </div>
-    <button class="ghost" id="logout">Lock</button>
+
+    <!-- app bar actions. Icons: Tabler Icons (MIT) — https://tabler.io/icons -->
+    <div class="bar-actions">
+      <button class="iconbtn" id="searchBtn" aria-label="Search" aria-expanded="false" title="Search">
+        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 10m-7 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0"></path><path d="M21 21l-6 -6"></path></svg>
+      </button>
+      <button class="iconbtn primary" id="newBtn" aria-label="New artifact" aria-expanded="false" title="New artifact">
+        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5l0 14"></path><path d="M5 12l14 0"></path></svg>
+        <span class="label">New</span>
+      </button>
+      <button class="iconbtn" id="settingsBtn" aria-label="Settings" aria-expanded="false" title="Settings">
+        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065z"></path><path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0"></path></svg>
+      </button>
+      <button class="iconbtn" id="keysBtn" aria-label="API keys" aria-expanded="false" title="API keys">
+        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M16.555 3.843l3.602 3.602a2.877 2.877 0 0 1 0 4.069l-2.643 2.643a2.877 2.877 0 0 1 -4.069 0l-.301 -.301l-6.558 6.558a2 2 0 0 1 -1.239 .578l-.175 .008h-1.977a1 1 0 0 1 -.993 -.883l-.007 -.117v-1.977a2 2 0 0 1 .467 -1.284l.119 -.13l.414 -.414h2v-2h2v-2l2.144 -2.144l-.301 -.301a2.877 2.877 0 0 1 0 -4.069l2.643 -2.643a2.877 2.877 0 0 1 4.069 0z"></path><path d="M15 9h.01"></path></svg>
+      </button>
+      <button class="iconbtn" id="logout" aria-label="Sign out" title="Sign out">
+        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 8v-2a2 2 0 0 0 -2 -2h-7a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h7a2 2 0 0 0 2 -2v-2"></path><path d="M9 12h12l-3 -3"></path><path d="M18 15l3 -3"></path></svg>
+      </button>
+
+      <!-- compose popover, anchored under +New -->
+      <div class="popover" id="composePop" role="dialog" aria-label="New artifact" aria-hidden="true">
+        <div class="pop-head"><h3>New artifact</h3><span class="hint">esc to close</span></div>
+        <div class="pop-body">
+          <div class="form">
+            <div class="row">
+              <select id="type">
+                <option value="html">html</option>
+                <option value="jsx">jsx</option>
+                <option value="tsx">tsx</option>
+                <option value="md">md</option>
+              </select>
+              <select id="frame" title="Top viewer frame">
+                <option value="default">frame: default</option>
+                <option value="on">frame: on</option>
+                <option value="off">frame: off</option>
+              </select>
+            </div>
+            <div class="row">
+              <input id="slug" placeholder="custom slug (optional)">
+              <input id="title" placeholder="title (optional)">
+            </div>
+            <div class="row">
+              <input id="tags" placeholder="tags, comma-separated">
+              <input id="project" placeholder="project">
+            </div>
+            <textarea id="content" placeholder="Paste HTML, a React component with a default export, or Markdown…" spellcheck="false"></textarea>
+            <div class="browse">or <a href="#" id="browseLink">browse files</a> to upload instead</div>
+            <div class="foot"><button id="publish">Publish</button></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- settings popover, anchored under the gear -->
+      <div class="popover" id="settingsPop" role="dialog" aria-label="Settings" aria-hidden="true">
+        <div class="pop-head"><h3>Settings</h3></div>
+        <div class="pop-body">
+          <div class="settings">
+            <label class="check">
+              <input type="checkbox" id="frameEnabled">
+              <span>Frame enabled globally<span class="desc">Master switch for the top viewer frame.</span></span>
+            </label>
+            <label class="check">
+              <input type="checkbox" id="frameDefault">
+              <span>Frame on by default<span class="desc">Applied to artifacts with no per-item setting.</span></span>
+            </label>
+            <div class="foot"><button id="saveSettings">Save settings</button><span class="saved" id="settingsSaved"></span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- API keys popover, anchored under the key icon -->
+      <div class="popover" id="keysPop" role="dialog" aria-label="API keys" aria-hidden="true">
+        <div class="pop-head"><h3>API keys</h3><span class="hint">for CLI &amp; MCP</span></div>
+        <div class="pop-body">
+          <div class="keys">
+            <div class="form">
+              <input id="keyName" placeholder="Key name (e.g. laptop-cli)">
+              <div class="scopes">
+                <label class="check"><input type="checkbox" id="scopeRead"><span>read</span></label>
+                <label class="check"><input type="checkbox" id="scopePublish" checked><span>publish</span></label>
+                <label class="check"><input type="checkbox" id="scopeFull"><span>full</span></label>
+              </div>
+              <input id="keyExpiry" type="text" placeholder="expiry (optional, e.g. 2026-12-31)">
+              <div class="foot"><button id="createKey">Create key</button></div>
+            </div>
+            <div id="keyReveal" class="key-reveal" hidden></div>
+            <div id="keyList" class="key-list"></div>
+          </div>
+        </div>
+      </div>
+    </div>
   </header>
+
+  <div class="searchbar" id="searchbar">
+    <div>
+      <div class="search-field">
+        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 10m-7 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0"></path><path d="M21 21l-6 -6"></path></svg>
+        <input id="search" type="search" placeholder="Search project, title, slug, or tag…" autocomplete="off">
+      </div>
+    </div>
+  </div>
 
   <div id="drop">
     <strong>Drop files to publish</strong> &nbsp;·&nbsp; or click to browse
@@ -291,66 +457,21 @@
 
   <div id="results"></div>
 
-  <details>
-    <summary>Paste content instead</summary>
-    <div class="paste-form">
-      <div class="row">
-        <select id="type">
-          <option value="html">html</option>
-          <option value="jsx">jsx</option>
-          <option value="tsx">tsx</option>
-          <option value="md">md</option>
-        </select>
-        <select id="frame" title="Top viewer frame">
-          <option value="default">frame: default</option>
-          <option value="on">frame: on</option>
-          <option value="off">frame: off</option>
-        </select>
-        <input id="slug" placeholder="custom slug (optional)">
-        <input id="title" placeholder="title (optional)">
-      </div>
-      <div class="row">
-        <input id="tags" placeholder="tags, comma-separated (optional)">
-        <input id="project" placeholder="project (optional)">
-      </div>
-      <textarea id="content" placeholder="Paste HTML, a React component with a default export, or Markdown…" spellcheck="false"></textarea>
-      <button id="publish">Publish</button>
-    </div>
-  </details>
-
-  <details id="settings">
-    <summary>Settings</summary>
-    <div class="settings-form">
-      <label>
-        <input type="checkbox" id="frameEnabled">
-        <span>Frame enabled globally <span class="desc">— master switch for the top viewer frame</span></span>
-      </label>
-      <label>
-        <input type="checkbox" id="frameDefault">
-        <span>Frame on by default <span class="desc">— applied to artifacts with no per-item setting</span></span>
-      </label>
-      <div class="save-row">
-        <button id="saveSettings">Save settings</button>
-        <span class="saved" id="settingsSaved"></span>
-      </div>
-    </div>
-  </details>
-
   <div id="list">
     <div class="section-head"><h2>Published</h2><span class="count" id="count"></span></div>
-    <input id="search" class="search" type="search" placeholder="Search project, title, slug, or tag…" autocomplete="off">
     <div class="items" id="rows"></div>
   </div>
 </div>
 
+<!-- outside-click catcher for popovers -->
+<div class="scrim" id="scrim"></div>
+
 <script>
   const $ = (id) => document.getElementById(id);
-  let KEY = localStorage.getItem('artifactsKey') || '';
 
-  const headers = () => ({
-    'Content-Type': 'application/json',
-    'Authorization': 'Bearer ' + KEY,
-  });
+  // Auth is now a session cookie (set by /api/auth/login), sent automatically on
+  // same-origin fetches — no bearer token in the browser anymore.
+  const headers = () => ({ 'Content-Type': 'application/json' });
 
   const TYPE_BY_EXT = {
     html: 'html', htm: 'html',
@@ -358,14 +479,9 @@
     md: 'md', markdown: 'md',
   };
 
-  // ---- lock / unlock ----
+  // ---- login / setup ----
 
-  async function validateKey(key) {
-    try {
-      const res = await fetch('/api/artifacts', { headers: { 'Authorization': 'Bearer ' + key } });
-      return res.ok;
-    } catch { return false; }
-  }
+  let SETUP = false; // first-run: no admin exists yet → create one
 
   function showApp() {
     $('lock').style.display = 'none';
@@ -377,31 +493,52 @@
   function showLock() {
     $('lock').style.display = 'flex';
     $('app').style.display = 'none';
-    $('lockKey').value = '';
-    $('lockKey').focus();
+    $('lockSub').textContent = SETUP ? 'Create the admin account' : 'Sign in';
+    $('lockSubmit').textContent = SETUP ? 'Create account' : 'Sign in';
+    $('lockPass').setAttribute('autocomplete', SETUP ? 'new-password' : 'current-password');
+    $('lockUser').value = '';
+    $('lockPass').value = '';
+    $('lockError').textContent = '';
+    $('lockUser').focus();
   }
 
-  async function tryUnlock() {
-    const key = $('lockKey').value.trim();
-    if (!key) return;
+  function shakeLock() {
+    $('lockCard').classList.remove('shake');
+    void $('lockCard').offsetWidth;
+    $('lockCard').classList.add('shake');
+  }
+
+  async function submitAuth() {
+    const username = $('lockUser').value.trim();
+    const password = $('lockPass').value;
+    if (!username || !password) return;
     $('lockError').textContent = '';
-    if (await validateKey(key)) {
-      KEY = key;
-      localStorage.setItem('artifactsKey', key);
-      showApp();
-    } else {
-      $('lockError').textContent = 'Wrong key';
-      $('lockCard').classList.remove('shake');
-      void $('lockCard').offsetWidth;
-      $('lockCard').classList.add('shake');
+    try {
+      const res = await fetch(SETUP ? '/api/auth/setup' : '/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      if (res.ok) {
+        SETUP = false;
+        showApp();
+      } else {
+        const d = await res.json().catch(() => ({}));
+        $('lockError').textContent = d.error || 'Failed';
+        shakeLock();
+      }
+    } catch {
+      $('lockError').textContent = 'Network error';
+      shakeLock();
     }
   }
 
-  $('unlock').addEventListener('click', tryUnlock);
-  $('lockKey').addEventListener('keydown', (e) => { if (e.key === 'Enter') tryUnlock(); });
-  $('logout').addEventListener('click', () => {
-    KEY = '';
-    localStorage.removeItem('artifactsKey');
+  $('lockSubmit').addEventListener('click', submitAuth);
+  $('lockUser').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('lockPass').focus(); });
+  $('lockPass').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitAuth(); });
+  $('logout').addEventListener('click', async () => {
+    try { await fetch('/api/auth/logout', { method: 'POST' }); } catch {}
+    SETUP = false;
     showLock();
   });
 
@@ -441,7 +578,7 @@
     const res = await fetch('/api/artifacts/zip?slug=' + encodeURIComponent(slug) +
       '&title=' + encodeURIComponent(title), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/zip', 'Authorization': 'Bearer ' + KEY },
+      headers: { 'Content-Type': 'application/zip' },
       body: buf,
     });
     const data = await res.json();
@@ -520,6 +657,7 @@
       $('content').value = '';
       $('tags').value = '';
       $('project').value = '';
+      closePops();
       loadList();
     } else {
       addResult('pasted ' + body.type, r.data.error || ('HTTP ' + r.status), false);
@@ -899,11 +1037,162 @@
     }
   });
 
+  // ---- api keys ----
+
+  async function loadKeys() {
+    try {
+      const res = await fetch('/api/keys');
+      if (!res.ok) return;
+      renderKeys(await res.json());
+    } catch {}
+  }
+
+  function renderKeys(keys) {
+    const box = $('keyList');
+    box.innerHTML = '';
+    if (!keys.length) {
+      const e = document.createElement('div');
+      e.className = 'empty';
+      e.textContent = 'No keys yet — create one for your CLI or MCP client.';
+      box.appendChild(e);
+      return;
+    }
+    for (const k of keys) box.appendChild(buildKeyRow(k));
+  }
+
+  function buildKeyRow(k) {
+    const row = document.createElement('div');
+    row.className = 'key-row' + (k.disabled ? ' off' : '');
+
+    const meta = document.createElement('div');
+    meta.className = 'kmeta';
+    const name = document.createElement('div');
+    name.className = 'kname';
+    name.textContent = k.name + ' · ' + k.scopes.join('/');
+    const sub = document.createElement('div');
+    sub.className = 'ksub';
+    const bits = [k.prefix + '…'];
+    if (k.expiresAt) bits.push('expires ' + k.expiresAt.slice(0, 10));
+    bits.push(k.lastUsedAt ? ('used ' + k.lastUsedAt.slice(0, 10)) : 'never used');
+    sub.textContent = bits.join(' · ');
+    meta.append(name, sub);
+
+    const acts = document.createElement('div');
+    acts.className = 'kacts';
+    const tgl = actBtn(k.disabled ? 'Enable' : 'Disable', 'tgl');
+    tgl.addEventListener('click', async () => {
+      await fetch('/api/keys/' + k.id, {
+        method: 'PATCH', headers: headers(), body: JSON.stringify({ disabled: !k.disabled }),
+      });
+      loadKeys();
+    });
+    const del = actBtn('Revoke', 'del');
+    del.addEventListener('click', async () => {
+      if (!confirm('Revoke “' + k.name + '”? Any CLI/MCP client using it stops working.')) return;
+      await fetch('/api/keys/' + k.id, { method: 'DELETE' });
+      loadKeys();
+    });
+    acts.append(tgl, del);
+
+    row.append(meta, acts);
+    return row;
+  }
+
+  $('createKey').addEventListener('click', async () => {
+    const name = $('keyName').value.trim();
+    const scopes = [];
+    if ($('scopeRead').checked) scopes.push('read');
+    if ($('scopePublish').checked) scopes.push('publish');
+    if ($('scopeFull').checked) scopes.push('full');
+    const expiresAt = $('keyExpiry').value.trim();
+    const reveal = $('keyReveal');
+    reveal.hidden = true;
+    reveal.textContent = '';
+    try {
+      const res = await fetch('/api/keys', {
+        method: 'POST', headers: headers(),
+        body: JSON.stringify({ name, scopes, expiresAt: expiresAt || undefined }),
+      });
+      const d = await res.json().catch(() => ({}));
+      reveal.hidden = false;
+      if (res.ok) {
+        reveal.textContent = 'Copy now — shown once: ' + d.key;
+        navigator.clipboard.writeText(d.key).catch(() => {});
+        $('keyName').value = '';
+        $('keyExpiry').value = '';
+        loadKeys();
+      } else {
+        reveal.textContent = d.error || 'Create failed';
+      }
+    } catch {
+      reveal.hidden = false;
+      reveal.textContent = 'Network error';
+    }
+  });
+
+  // ---- app bar popovers + search reveal ----
+
+  const POPS = {
+    compose: ['composePop', 'newBtn'],
+    settings: ['settingsPop', 'settingsBtn'],
+    keys: ['keysPop', 'keysBtn'],
+  };
+
+  function closePops() {
+    for (const [pop, btn] of Object.values(POPS)) {
+      $(pop).classList.remove('open');
+      $(pop).setAttribute('aria-hidden', 'true');
+      $(btn).classList.remove('on');
+      $(btn).setAttribute('aria-expanded', 'false');
+    }
+    $('scrim').classList.remove('open');
+  }
+
+  function togglePop(name) {
+    const [pop, btn] = POPS[name];
+    const wasOpen = $(pop).classList.contains('open');
+    closePops();
+    if (wasOpen) return;
+    $(pop).classList.add('open');
+    $(pop).setAttribute('aria-hidden', 'false');
+    $(btn).classList.add('on');
+    $(btn).setAttribute('aria-expanded', 'true');
+    $('scrim').classList.add('open');
+    const first = $(pop).querySelector('input, select, textarea');
+    if (first) setTimeout(() => first.focus(), 60);
+  }
+
+  function toggleSearch(force) {
+    const open = force !== undefined ? force : !$('searchbar').classList.contains('open');
+    $('searchbar').classList.toggle('open', open);
+    $('searchBtn').classList.toggle('on', open);
+    $('searchBtn').setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) setTimeout(() => $('search').focus(), 60);
+  }
+
+  $('newBtn').addEventListener('click', () => togglePop('compose'));
+  $('settingsBtn').addEventListener('click', () => togglePop('settings'));
+  $('keysBtn').addEventListener('click', () => { togglePop('keys'); loadKeys(); });
+  $('searchBtn').addEventListener('click', () => toggleSearch());
+  $('browseLink').addEventListener('click', (e) => { e.preventDefault(); $('file').click(); });
+  $('scrim').addEventListener('click', closePops);
+  // keep popovers from closing when interacting inside them
+  document.querySelectorAll('.popover').forEach((p) => p.addEventListener('click', (e) => e.stopPropagation()));
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    closePops();
+    if ($('searchbar').classList.contains('open') && !$('search').value) toggleSearch(false);
+  });
+
   // ---- boot ----
 
   (async () => {
-    if (KEY && await validateKey(KEY)) showApp();
-    else showLock();
+    try {
+      const s = await fetch('/api/auth/session').then((r) => r.json());
+      if (s.authenticated) return showApp();
+      SETUP = !!s.needsSetup;
+    } catch {}
+    showLock();
   })();
 </script>
 </body>

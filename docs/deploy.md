@@ -38,11 +38,15 @@ Or keep the configuration in a file: `cp .env.example .env`, edit it, then `npm 
 
 | Env var | Required | Default | Purpose |
 |---|---|---|---|
-| `ARTIFACTS_API_KEY` | yes | — | Bearer token for all writes and the MCP endpoint |
-| `BASE_URL` | recommended | `http://localhost:3000` | Public origin used in returned URLs |
+| `ARTIFACTS_API_KEY` | yes | — | Bootstrap admin bearer — all-scope break-glass key; also mints [managed keys](auth.md) |
+| `ARTIFACTS_ADMIN_USERNAME` | no | — | Seed the admin account on first boot (else use the dashboard setup screen) |
+| `ARTIFACTS_ADMIN_PASSWORD` | no | — | Password for the seeded admin account |
+| `BASE_URL` | recommended | `http://localhost:3000` | Public origin in returned URLs; an `https://` value marks the session cookie `Secure` |
 | `STORAGE_BACKEND` | no | `local` | Storage backend: `local`, `s3`, `git`, `postgres`, or `sqlite` |
 | `DATA_DIR` | no | `/data` | `local` backend only — directory of plain files |
 | `PORT` | no | `3000` | Listen port |
+
+Day-to-day, give CLI and MCP clients scoped [managed API keys](auth.md) rather than the bootstrap key. Auth state (admin account, session-signing secret, managed keys) persists under a reserved `auth.json` object through the storage backend, so it survives a restart on every backend with no migration. Like the frame config, it is loaded once at boot; running **multiple replicas** against a shared backend is best paired with a pre-seeded admin (`ARTIFACTS_ADMIN_*`) — a session cookie signed by one replica's boot-time secret is not valid on a replica that started before that secret was written.
 
 ## Storage backends
 
@@ -191,4 +195,4 @@ Note for Coolify specifically: the `node:22-slim` image has no `curl`/`wget`, so
 
 ## Deployment rule (security)
 
-Uploaded HTML executes on this origin — that's the product. Host the service on a **dedicated subdomain that serves nothing else and never sets cookies**. See [SECURITY.md](../SECURITY.md) for the full security model.
+Uploaded HTML executes on the origin it is served from — that's the product. Serve **artifacts** (`/a/…`) from a **dedicated origin that serves nothing else**. The dashboard/API sets an admin session cookie; keeping artifacts on a separate origin ensures uploaded pages can never ride that cookie to call `/api/*`. Artifact responses themselves never set cookies. See [SECURITY.md](../SECURITY.md) for the full model.

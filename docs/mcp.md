@@ -4,6 +4,8 @@ Let Claude Code, Codex, or any MCP client publish artifacts with one tool call. 
 
 The server exposes a streamable HTTP endpoint at `/mcp`, bearer-authenticated. Registry listing: [`io.github.kuyazee/artifacts`](https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.kuyazee/artifacts).
 
+Authenticate with a scoped [managed API key](auth.md) (or the bootstrap `ARTIFACTS_API_KEY`). The key's scope gates the tools: `read` allows `list_artifacts`; `publish` allows the mutation tools; `delete_artifact` needs `full`. A tool called beyond the key's scope returns an error. Mint a `publish` key for a client that should publish but never delete.
+
 ## Tools
 
 | Tool | Args | Returns |

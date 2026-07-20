@@ -2,21 +2,23 @@
 
 Full HTTP reference, including zip-site deploys. ([← back to README](../README.md))
 
-All `/api/*` and `/mcp` calls need `Authorization: Bearer $ARTIFACTS_API_KEY`. Reads under `/a/` are public.
+All `/api/*` and `/mcp` calls need `Authorization: Bearer <key>` — a scoped [managed key](auth.md) or the bootstrap `ARTIFACTS_API_KEY`. Each write route enforces a minimum scope (below). Reads under `/a/` are public.
 
 ```
-POST   /api/artifacts        {content, type: html|jsx|tsx|md, slug?, title?, tags?, project?, expiresAt?, frame?} → 201 {slug, url}
-POST   /api/artifacts/zip    raw zip body (?slug=&title=&tags=&project=&expiresAt=) → 201 {slug, url, files}
-PUT    /api/artifacts/:slug  {content, type, title?, tags?, project?, expiresAt?, frame?} → {slug, url}
-PATCH  /api/artifacts/:slug  {slug?, disabled?, expiresAt?, tags?, project?, frame?} → {slug, url}   (rename / disable / expiry / tags / project / frame)
-DELETE /api/artifacts/:slug                                                  → {deleted}
-GET    /api/artifacts        list (?tag= and/or ?project= to filter)         → [{slug, type, title, tags, project?, frame?, createdAt, updatedAt}]
-GET    /api/config           {frame: {enabled, default}}                     → global frame config
-PUT    /api/config           {frame: {enabled?, default?}}                   → updated config
+POST   /api/artifacts        {content, type: html|jsx|tsx|md, slug?, title?, tags?, project?, expiresAt?, frame?} → 201 {slug, url}   [publish]
+POST   /api/artifacts/zip    raw zip body (?slug=&title=&tags=&project=&expiresAt=) → 201 {slug, url, files}   [publish]
+PUT    /api/artifacts/:slug  {content, type, title?, tags?, project?, expiresAt?, frame?} → {slug, url}   [publish]
+PATCH  /api/artifacts/:slug  {slug?, disabled?, expiresAt?, tags?, project?, frame?} → {slug, url}   [publish]
+DELETE /api/artifacts/:slug                                                  → {deleted}   [full]
+GET    /api/artifacts        list (?tag= and/or ?project= to filter)         → [...]   [read]
+GET    /api/config           {frame: {enabled, default}}                     → global frame config   [read]
+PUT    /api/config           {frame: {enabled?, default?}}                   → updated config   [full]
 GET    /a/:slug              rendered artifact, framed when active (public)
 GET    /a/:slug?raw=1        bare artifact without the frame (public)
 GET    /a/:slug/source       original uploaded source, text/plain (public)
 ```
+
+The `[read|publish|full]` tag on each route is the minimum key scope required (`full` implies `publish` implies `read`). Admin session + managed-key endpoints (`/api/auth/*`, `/api/keys*`) are documented in [Auth & API keys](auth.md).
 
 Semantics:
 
