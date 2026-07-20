@@ -37,6 +37,7 @@ It runs as one container with a single admin account and, by default, no databas
 - **Agent-native, human-friendly.** A built-in MCP server lets Claude Code, Codex, or any MCP client publish with one tool call. Humans get a drag-and-drop web UI at `/` (behind an admin login) and a [CLI](docs/cli.md).
 - **Two-tier auth.** An admin logs into the dashboard with a password; CLI and MCP carry scoped, revocable [API keys](docs/auth.md) (`read` / `publish` / `full`) with optional expiry — no more sharing one master secret.
 - **Private by default.** Unguessable slugs, `noindex` everywhere, bearer-key writes, optional expiry.
+- **Per-artifact visibility.** Each artifact is public (anyone with the link), private (operator only, gated by the admin password), or password-protected (a shared password you hand out) — see [visibility](docs/api.md#visibility).
 - **Optional viewer frame.** A slim top toolbar (title, copy link, hide) like Claude/Gemini/ChatGPT artifacts — toggle it globally in Settings or per artifact; `?raw=1` always serves the bare content.
 - **Organize by project.** Group artifacts built for the same project into collapsible sections, with a search box across project / title / slug / tags. Tags stay for cross-cutting labels.
 - **Lifecycle controls.** Custom slugs, rename, tags, disable without deleting, auto-expire, delete.

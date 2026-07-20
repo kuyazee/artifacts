@@ -287,6 +287,28 @@ function requireApiKey(scope) {
   };
 }
 
+// Artifact/config endpoints: an admin session cookie (dashboard, all scopes) OR a
+// bearer key (CLI/MCP/REST, scoped). Unifies the two callers on one gate — the
+// browser dropped its bearer for the session cookie, so a bearer-only guard would
+// 401 the dashboard.
+function requireAuth(scope) {
+  return (req, res, next) => {
+    let principal = sessionPrincipal(req);
+    if (!principal) {
+      const header = req.headers.authorization || '';
+      const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+      principal = resolveApiKey(token);
+    }
+    if (!principal) return res.status(401).json({ error: 'unauthorized' });
+    if (!hasScope(principal.scopes, scope)) {
+      return res.status(403).json({ error: `forbidden: requires "${scope}" scope` });
+    }
+    req.principal = principal;
+    touchKey(principal.key); // no-op for session principals (no .key)
+    next();
+  };
+}
+
 // Dashboard-only endpoints: a valid admin session cookie.
 function requireSession(req, res, next) {
   const principal = sessionPrincipal(req);
@@ -368,6 +390,46 @@ function frameActive(meta) {
 const JSX_SHELL = await fs.readFile(path.join(__dirname, 'shells', 'jsx.html'), 'utf8');
 const MD_SHELL = await fs.readFile(path.join(__dirname, 'shells', 'md.html'), 'utf8');
 const FRAME_SHELL = await fs.readFile(path.join(__dirname, 'shells', 'frame.html'), 'utf8');
+const PASSWORD_SHELL = await fs.readFile(path.join(__dirname, 'shells', 'password.html'), 'utf8');
+
+// Per-artifact visibility. Absent meta.visibility === 'public' (today's behavior:
+// anyone with the unguessable link views). 'private' and 'password' are gated at
+// the serve routes by an unlock cookie (below).
+const VISIBILITIES = ['public', 'private', 'password'];
+const UNLOCK_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+// Unlock cookie: HMAC({slug, exp}) signed with the session secret, HttpOnly and
+// scoped to Path=/a/<slug> so it never rides to another artifact. Set on a correct
+// password (per-artifact for 'password', the admin password for 'private').
+function unlockCookieName(slug) {
+  return `au_${slug}`;
+}
+
+async function issueUnlock(res, slug) {
+  const secret = await ensureSessionSecret();
+  const token = signSession({ slug, exp: Date.now() + UNLOCK_TTL_MS }, secret);
+  res.cookie(unlockCookieName(slug), token, {
+    httpOnly: true,
+    secure: BASE_URL.startsWith('https'),
+    sameSite: 'lax',
+    maxAge: UNLOCK_TTL_MS,
+    path: `/a/${slug}`,
+  });
+}
+
+function unlockValid(req, slug) {
+  const payload = verifySession(readCookie(req, unlockCookieName(slug)), auth.sessionSecret);
+  if (!payload || payload.slug !== slug) return false;
+  return !(typeof payload.exp === 'number' && payload.exp <= Date.now());
+}
+
+// May this request view the artifact body? Public: always. Private/password: an
+// admin session (same-origin convenience) or a valid unlock cookie.
+function artifactUnlocked(req, meta) {
+  if (meta.visibility !== 'private' && meta.visibility !== 'password') return true;
+  if (sessionPrincipal(req)) return true;
+  return unlockValid(req, meta.slug);
+}
 
 const TYPES = ['html', 'jsx', 'tsx', 'md'];
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{2,63}$/;
@@ -428,6 +490,18 @@ function buildFrameHtml(meta, rawUrl) {
   return FRAME_SHELL
     .replaceAll('{{TITLE}}', () => title)
     .replaceAll('{{RAW_URL}}', () => url);
+}
+
+// Unlock prompt: our own page (inline styles/script), posts the password to
+// /a/<slug>/unlock. LABEL distinguishes the per-artifact password from the
+// operator (admin) password used to view a private artifact.
+function buildPromptHtml(meta) {
+  const title = escapeHtml(meta.title || meta.slug);
+  const label = meta.visibility === 'private' ? 'Operator password' : 'Password';
+  return PASSWORD_SHELL
+    .replaceAll('{{TITLE}}', () => title)
+    .replaceAll('{{SLUG}}', () => escapeHtml(meta.slug))
+    .replaceAll('{{LABEL}}', () => escapeHtml(label));
 }
 
 function escapeHtml(s) {
@@ -628,12 +702,18 @@ function isExpired(meta) {
   return Boolean(meta.expiresAt && Date.parse(meta.expiresAt) <= Date.now());
 }
 
-async function saveArtifact({ content, type = 'html', slug, title, expiresAt, frame, tags, project }, { replace = false } = {}) {
+async function saveArtifact({ content, type = 'html', slug, title, expiresAt, frame, tags, project, visibility, password }, { replace = false } = {}) {
   if (typeof content !== 'string' || !content.trim()) {
     throw new ApiError(400, 'content (non-empty string) is required');
   }
   if (frame !== undefined && typeof frame !== 'boolean') {
     throw new ApiError(400, 'frame must be a boolean');
+  }
+  if (visibility !== undefined && !VISIBILITIES.includes(visibility)) {
+    throw new ApiError(400, 'visibility must be public, private, or password');
+  }
+  if (visibility === 'password' && (typeof password !== 'string' || !password)) {
+    throw new ApiError(400, 'password is required when visibility is "password"');
   }
   const expiry = expiresAt !== undefined ? parseExpiresAt(expiresAt) : undefined;
   const tagList = tags !== undefined ? parseTags(tags) : undefined;
@@ -678,12 +758,37 @@ async function saveArtifact({ content, type = 'html', slug, title, expiresAt, fr
   if (frame !== undefined) meta.frame = frame;
   if (tagList !== undefined) meta.tags = tagList.length ? tagList : undefined;
   if (projectName !== undefined) meta.project = projectName || undefined;
+  if (visibility !== undefined) {
+    if (visibility === 'password') {
+      meta.visibility = 'password';
+      meta.password = hashPassword(password);
+    } else if (visibility === 'private') {
+      meta.visibility = 'private';
+      delete meta.password;
+    } else {
+      delete meta.visibility; // public is the default → omit
+      delete meta.password;
+    }
+  } else if (password !== undefined && meta.visibility === 'password') {
+    if (typeof password !== 'string' || !password) {
+      throw new ApiError(400, 'password must be a non-empty string');
+    }
+    meta.password = hashPassword(password); // rotate on an existing password artifact
+  }
   // meta.json LAST as the commit marker (see storage/index.js write-ordering contract).
   await storage.put(`${finalSlug}/meta.json`, JSON.stringify(meta, null, 2), {
     contentType: 'application/json',
   });
   await storage.flush?.(); // durably commit the completed write (git); no-op elsewhere
   return { slug: finalSlug, url: `${BASE_URL}/a/${finalSlug}` };
+}
+
+// Strip the password hash before an artifact's meta leaves the server; expose only
+// whether a password is set so the dashboard can render state without the secret.
+function publicMeta(meta) {
+  const { password, ...rest } = meta;
+  if (password) rest.hasPassword = true;
+  return rest;
 }
 
 async function listArtifacts({ tag, project } = {}) {
@@ -697,7 +802,7 @@ async function listArtifacts({ tag, project } = {}) {
       }
     })
     .filter(Boolean)
-    .map((m) => ({ ...m, tags: m.tags || [] }))
+    .map((m) => ({ ...publicMeta(m), tags: m.tags || [] }))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   if (tag !== undefined) {
     const wanted = String(tag).trim().toLowerCase();
@@ -758,6 +863,27 @@ async function patchArtifact(slug, patch) {
   if (patch.project !== undefined) {
     const project = parseProject(patch.project);
     meta.project = project || undefined; // '' clears it
+  }
+
+  if (patch.visibility !== undefined || patch.password !== undefined) {
+    if (patch.visibility !== undefined && !VISIBILITIES.includes(patch.visibility)) {
+      throw new ApiError(400, 'visibility must be public, private, or password');
+    }
+    const target = patch.visibility !== undefined ? patch.visibility : meta.visibility || 'public';
+    if (target === 'password') {
+      if (typeof patch.password === 'string' && patch.password) {
+        meta.password = hashPassword(patch.password); // set or rotate
+      } else if (!meta.password) {
+        throw new ApiError(400, 'password is required for visibility "password"');
+      }
+      meta.visibility = 'password';
+    } else if (target === 'private') {
+      meta.visibility = 'private';
+      delete meta.password;
+    } else {
+      delete meta.visibility; // public
+      delete meta.password;
+    }
   }
 
   meta.updatedAt = new Date().toISOString();
@@ -929,6 +1055,18 @@ app.get('/a/:slug', async (req, res) => {
   if (isExpired(meta)) {
     return res.status(410).type('text/plain').send('artifact expired');
   }
+  // Visibility gate: private/password serve the unlock prompt (401) until a valid
+  // unlock cookie is present. Must run before the frame/raw/zip branches so no
+  // view path (?raw=1, zip index) leaks the body.
+  if (!artifactUnlocked(req, meta)) {
+    res.set({
+      'Content-Security-Policy': FRAME_CSP,
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer',
+      'Cache-Control': 'no-cache',
+    });
+    return res.status(401).type('html').send(buildPromptHtml(meta));
+  }
   // Framed view: serve the wrapper page (toolbar + iframe → ?raw=1). `?raw=1`
   // is the escape hatch the iframe uses to load the bare artifact.
   const wantsRaw = req.query.raw !== undefined;
@@ -963,6 +1101,7 @@ app.get('/a/:slug/source', async (req, res, next) => {
   const meta = SLUG_RE.test(slug) ? await readMeta(slug) : null;
   if (!meta || meta.disabled) return res.status(404).type('text/plain').send('artifact not found');
   if (isExpired(meta)) return res.status(410).type('text/plain').send('artifact expired');
+  if (!artifactUnlocked(req, meta)) return res.status(404).type('text/plain').send('not found');
   if (meta.type === 'zip') return next(); // zip sites serve /source as a site path
   res.set({ 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
   // forceType keeps source inert: an HTML/JSX source is served as text/plain, never executed.
@@ -976,6 +1115,7 @@ app.get('/a/:slug/*', async (req, res) => {
   const meta = SLUG_RE.test(slug) ? await readMeta(slug) : null;
   if (!meta || meta.disabled) return res.status(404).type('text/plain').send('artifact not found');
   if (isExpired(meta)) return res.status(410).type('text/plain').send('artifact expired');
+  if (!artifactUnlocked(req, meta)) return res.status(404).type('text/plain').send('not found');
   if (meta.type !== 'zip') return res.status(404).type('text/plain').send('not found');
   res.set(ARTIFACT_HEADERS);
 
@@ -992,7 +1132,29 @@ app.get('/a/:slug/*', async (req, res) => {
   serveObject(req, res, key);
 });
 
-app.post('/api/artifacts', requireApiKey('publish'), async (req, res, next) => {
+// Verify the unlock password and set the per-slug unlock cookie. 'password' mode
+// checks the per-artifact password; 'private' mode checks the admin password.
+// (Rate-limiting this endpoint is deferred — single-operator scope.)
+app.post('/a/:slug/unlock', async (req, res, next) => {
+  try {
+    const { slug } = req.params;
+    const meta = SLUG_RE.test(slug) ? await readMeta(slug) : null;
+    if (!meta || meta.disabled) return res.status(404).json({ error: 'not found' });
+    if (isExpired(meta)) return res.status(410).json({ error: 'expired' });
+    const password = req.body?.password;
+    let ok = false;
+    if (meta.visibility === 'password') ok = verifyPassword(password, meta.password);
+    else if (meta.visibility === 'private') ok = verifyPassword(password, auth.admin);
+    else return res.status(400).json({ error: 'artifact is not password protected' });
+    if (!ok) return res.status(401).json({ error: 'incorrect password' });
+    await issueUnlock(res, slug);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/artifacts', requireAuth('publish'), async (req, res, next) => {
   try {
     res.status(201).json(await saveArtifact(req.body));
   } catch (err) {
@@ -1005,7 +1167,7 @@ const zipBody = express.raw({
   limit: '50mb',
 });
 
-app.post('/api/artifacts/zip', requireApiKey('publish'), zipBody, async (req, res, next) => {
+app.post('/api/artifacts/zip', requireAuth('publish'), zipBody, async (req, res, next) => {
   try {
     if (!Buffer.isBuffer(req.body) || !req.body.length) {
       throw new ApiError(400, 'raw zip body required (Content-Type: application/zip)');
@@ -1017,7 +1179,7 @@ app.post('/api/artifacts/zip', requireApiKey('publish'), zipBody, async (req, re
   }
 });
 
-app.put('/api/artifacts/:slug', requireApiKey('publish'), async (req, res, next) => {
+app.put('/api/artifacts/:slug', requireAuth('publish'), async (req, res, next) => {
   try {
     res.json(await saveArtifact({ ...req.body, slug: req.params.slug }, { replace: true }));
   } catch (err) {
@@ -1025,7 +1187,7 @@ app.put('/api/artifacts/:slug', requireApiKey('publish'), async (req, res, next)
   }
 });
 
-app.patch('/api/artifacts/:slug', requireApiKey('publish'), async (req, res, next) => {
+app.patch('/api/artifacts/:slug', requireAuth('publish'), async (req, res, next) => {
   try {
     res.json(await patchArtifact(req.params.slug, req.body));
   } catch (err) {
@@ -1033,7 +1195,7 @@ app.patch('/api/artifacts/:slug', requireApiKey('publish'), async (req, res, nex
   }
 });
 
-app.delete('/api/artifacts/:slug', requireApiKey('full'), async (req, res, next) => {
+app.delete('/api/artifacts/:slug', requireAuth('full'), async (req, res, next) => {
   try {
     await deleteArtifact(req.params.slug);
     res.json({ deleted: req.params.slug });
@@ -1042,7 +1204,7 @@ app.delete('/api/artifacts/:slug', requireApiKey('full'), async (req, res, next)
   }
 });
 
-app.get('/api/artifacts', requireApiKey('read'), async (req, res, next) => {
+app.get('/api/artifacts', requireAuth('read'), async (req, res, next) => {
   try {
     const { tag, project } = req.query;
     const opts = {};
@@ -1054,11 +1216,11 @@ app.get('/api/artifacts', requireApiKey('read'), async (req, res, next) => {
   }
 });
 
-app.get('/api/config', requireApiKey('read'), (req, res) => {
+app.get('/api/config', requireAuth('read'), (req, res) => {
   res.json(config);
 });
 
-app.put('/api/config', requireApiKey('full'), async (req, res, next) => {
+app.put('/api/config', requireAuth('full'), async (req, res, next) => {
   try {
     res.json(await updateConfig(req.body));
   } catch (err) {
@@ -1221,6 +1383,14 @@ function createMcpServer(scopes = SCOPES) {
           .string()
           .optional()
           .describe('Project this artifact belongs to (single grouping label, max 64 chars)'),
+        visibility: z
+          .enum(['public', 'private', 'password'])
+          .optional()
+          .describe('public (default: anyone with the link), private (operator only), or password (requires the shared password)'),
+        password: z
+          .string()
+          .optional()
+          .describe('Shared view password; required when visibility is "password"'),
       },
     },
     async (args) => {
@@ -1252,6 +1422,14 @@ function createMcpServer(scopes = SCOPES) {
           .string()
           .optional()
           .describe('Project this artifact belongs to; omit to keep the existing project'),
+        visibility: z
+          .enum(['public', 'private', 'password'])
+          .optional()
+          .describe('Change access level; omit to keep the current visibility'),
+        password: z
+          .string()
+          .optional()
+          .describe('Set/rotate the shared password; required when changing visibility to "password"'),
       },
     },
     async (args) => {
@@ -1335,6 +1513,28 @@ function createMcpServer(scopes = SCOPES) {
       await patchArtifact(slug, { project });
       const text = project.trim() ? `${slug} → project “${project.trim()}”` : `project cleared for ${slug}`;
       return { content: [{ type: 'text', text }] };
+    },
+  );
+
+  server.registerTool(
+    'set_artifact_visibility',
+    {
+      title: 'Set artifact visibility',
+      description:
+        'Set an artifact to public (anyone with the link), private (operator only), or password (requires a shared password). Provide password when setting "password".',
+      inputSchema: {
+        slug: z.string(),
+        visibility: z.enum(['public', 'private', 'password']),
+        password: z
+          .string()
+          .optional()
+          .describe('Required when setting visibility to "password"; also rotates an existing one'),
+      },
+    },
+    async ({ slug, visibility, password }) => {
+      requireScope('publish');
+      await patchArtifact(slug, { visibility, password });
+      return { content: [{ type: 'text', text: `${slug} visibility → ${visibility}` }] };
     },
   );
 
