@@ -387,8 +387,8 @@
             </div>
             <div class="row">
               <select id="visibility" title="Who can view this artifact">
-                <option value="public">visibility: public</option>
                 <option value="private">visibility: private</option>
+                <option value="public">visibility: public</option>
                 <option value="password">visibility: password</option>
               </select>
               <input id="password" type="password" placeholder="view password" autocomplete="new-password" style="display:none">
@@ -664,7 +664,7 @@
     if ($('frame').value !== 'default') body.frame = $('frame').value === 'on';
     if ($('tags').value.trim()) body.tags = $('tags').value;
     if ($('project').value.trim()) body.project = $('project').value.trim();
-    if ($('visibility').value !== 'public') body.visibility = $('visibility').value;
+    body.visibility = $('visibility').value; // authoritative: what the select shows is what you get
     if ($('visibility').value === 'password') {
       if (!$('password').value) { addResult('pasted ' + body.type, 'a view password is required', false); return; }
       body.password = $('password').value;
@@ -677,7 +677,7 @@
       $('tags').value = '';
       $('project').value = '';
       $('password').value = '';
-      $('visibility').value = 'public';
+      $('visibility').value = 'private';
       $('password').style.display = 'none';
       closePops();
       loadList();
@@ -880,11 +880,23 @@
       const actions = document.createElement('div');
       actions.className = 'item-actions';
 
+      const nonPublic = a.visibility === 'private' || a.visibility === 'password';
       const copy = actBtn('Copy', 'copy');
-      copy.addEventListener('click', () => {
-        navigator.clipboard.writeText(location.origin + '/a/' + a.slug)
-          .then(() => flash(copy, 'Copied'))
-          .catch(() => flash(copy, 'Copy failed'));
+      copy.addEventListener('click', async () => {
+        try {
+          // Public: the bare link is the share link. Non-public: mint a fresh capability
+          // link (?k=…) on demand so the token is never persisted in the list rows.
+          let link = location.origin + '/a/' + a.slug + (a.type === 'zip' ? '/' : '');
+          if (nonPublic) {
+            const res = await fetch('/api/artifacts/' + a.slug + '/link', { headers: headers() });
+            if (!res.ok) throw new Error();
+            link = (await res.json()).url;
+          }
+          await navigator.clipboard.writeText(link);
+          flash(copy, 'Copied');
+        } catch {
+          flash(copy, 'Copy failed');
+        }
       });
 
       const ren = actBtn('Rename', 'ren');
@@ -951,6 +963,27 @@
         loadList();
       });
 
+      // Rotate the share link — only meaningful for a private/password artifact. A single
+      // epoch bump invalidates every link already handed out and every live unlock cookie.
+      const rot = nonPublic ? actBtn('Rotate link', 'rot') : null;
+      if (rot) {
+        rot.title = 'Invalidate every share link handed out for this artifact';
+        rot.addEventListener('click', async () => {
+          if (!confirm('Rotate the link for “' + a.slug + '”? Every link you have already shared stops working.')) return;
+          const res = await fetch('/api/artifacts/' + a.slug, {
+            method: 'PATCH', headers: headers(), body: JSON.stringify({ rotateToken: true }),
+          });
+          if (!res.ok) {
+            const d = await res.json().catch(() => ({}));
+            alert(d.error || 'rotate failed');
+            return;
+          }
+          const link = (await res.json()).url;
+          await navigator.clipboard.writeText(link).catch(() => {});
+          flash(rot, 'Rotated — new link copied');
+        });
+      }
+
       const tagbtn = actBtn('Tags', 'tagbtn');
       tagbtn.addEventListener('click', async () => {
         const v = prompt('Tags for “' + a.slug + '” (comma-separated, empty to clear)',
@@ -1016,7 +1049,7 @@
       });
 
       // priority order: earlier actions stay inline; the tail overflows into ⋯
-      const priority = [copy, frm, vis, tagbtn, projBtn, ren, tgl, exp, del];
+      const priority = [copy, frm, vis, ...(rot ? [rot] : []), tagbtn, projBtn, ren, tgl, exp, del];
       const n = Math.min(inlineN, priority.length);
       priority.forEach((btn, i) => { (i < n ? actions : menu).appendChild(btn); });
       if (n < priority.length) actions.appendChild(more);

@@ -9,7 +9,7 @@ const USAGE = `artifacts — publish to a self-hosted artifacts instance
 
 Usage:
   artifacts publish <file> [--slug s] [--title t] [--tags a,b] [--project p] [--expires ISO] [--type html|jsx|tsx|md] [--frame on|off] [--visibility public|private|password] [--password pw]
-  artifacts deploy <dir|zip> [--slug s] [--title t] [--tags a,b] [--project p] [--expires ISO]
+  artifacts deploy <dir|zip> [--slug s] [--title t] [--tags a,b] [--project p] [--expires ISO] [--visibility public|private|password] [--password pw]
   artifacts update <slug> <file> [--title t] [--tags a,b] [--project p] [--type html|jsx|tsx|md]
   artifacts list [--tag t] [--project p]
   artifacts rename <slug> <new-slug>
@@ -17,6 +17,7 @@ Usage:
   artifacts enable <slug>
   artifacts frame <slug> <on|off|default>
   artifacts visibility <slug> <public|private|password> [--password pw]
+  artifacts rotate <slug>
   artifacts expire <slug> <ISO-date|never>
   artifacts tag <slug> <a,b,c|none>
   artifacts project <slug> <name|none>
@@ -155,6 +156,8 @@ switch (command) {
     if (opts.tags) params.set('tags', opts.tags);
     if (opts.project) params.set('project', opts.project);
     if (opts.expires) params.set('expiresAt', opts.expires);
+    if (opts.visibility) params.set('visibility', opts.visibility);
+    if (opts.password) params.set('password', opts.password);
     const qs = params.size ? `?${params}` : '';
     const out = JSON.parse(await api('POST', `/api/artifacts/zip${qs}`, {
       body: zipBuffer,
@@ -232,11 +235,18 @@ switch (command) {
     if (args[1] === 'password' && !opts.password) {
       fail('--password is required when setting visibility to password');
     }
-    await apiJson('PATCH', `/api/artifacts/${args[0]}`, {
+    const out = await apiJson('PATCH', `/api/artifacts/${args[0]}`, {
       visibility: args[1],
       ...(opts.password !== undefined && { password: opts.password }),
     });
-    console.log(`${args[0]} visibility ${args[1]}`);
+    console.log(out.url); // tokened link for private/password, bare for public
+    break;
+  }
+
+  case 'rotate': {
+    need(1, '<slug>');
+    const out = await apiJson('PATCH', `/api/artifacts/${args[0]}`, { rotateToken: true });
+    console.log(out.url); // fresh link; every previously shared link now 404s
     break;
   }
 

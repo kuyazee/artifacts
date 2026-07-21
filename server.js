@@ -467,6 +467,10 @@ const PASSWORD_SHELL = await fs.readFile(path.join(__dirname, 'shells', 'passwor
 // the serve routes by an unlock cookie (below).
 const VISIBILITIES = ['public', 'private', 'password'];
 const UNLOCK_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+// Visibility of a newly published artifact when the caller specifies none. Ships 'private'
+// (opt in to public). 'password' is nonsensical as a default (no password to set), so only
+// 'public' overrides; anything else falls back to 'private'.
+const DEFAULT_VISIBILITY = process.env.DEFAULT_VISIBILITY === 'public' ? 'public' : 'private';
 
 // Unlock cookie: HMAC({typ:'unlock', slug, epoch, exp}) signed with the session
 // secret, HttpOnly and scoped to Path=/a/<slug> so it never rides to another artifact.
@@ -713,13 +717,21 @@ function extractSiteFiles(zip) {
   return files;
 }
 
-async function saveZipArtifact(buffer, { slug, title, expiresAt, tags, project }) {
+async function saveZipArtifact(buffer, { slug, title, expiresAt, tags, project, visibility, password }) {
   if (slug !== undefined && !SLUG_RE.test(slug)) {
     throw new ApiError(400, 'slug must match [a-z0-9][a-z0-9-]{2,63}');
   }
   const expiry = expiresAt !== undefined ? parseExpiresAt(expiresAt) : undefined;
   const tagList = tags !== undefined ? parseTags(tags) : undefined;
   const projectName = project !== undefined ? parseProject(project) : undefined;
+  // Zip artifacts are always new (no inline-replace path), so resolve the default here.
+  const vis = visibility !== undefined ? visibility : DEFAULT_VISIBILITY;
+  if (!VISIBILITIES.includes(vis)) {
+    throw new ApiError(400, 'visibility must be public, private, or password');
+  }
+  if (vis === 'password' && (typeof password !== 'string' || !password)) {
+    throw new ApiError(400, 'password is required when visibility is "password"');
+  }
 
   let zip;
   try {
@@ -748,12 +760,19 @@ async function saveZipArtifact(buffer, { slug, title, expiresAt, tags, project }
   if (expiry !== undefined) meta.expiresAt = expiry;
   if (tagList?.length) meta.tags = tagList;
   if (projectName) meta.project = projectName;
+  if (vis === 'password') {
+    meta.visibility = 'password';
+    meta.password = await hashPassword(password);
+  } else if (vis === 'private') {
+    meta.visibility = 'private';
+  }
+  seedTokenEpoch(meta);
   // meta.json LAST: a crash mid-upload leaves the namespace invisible (404), not half-served.
   await storage.put(`${finalSlug}/meta.json`, JSON.stringify(meta, null, 2), {
     contentType: 'application/json',
   });
   await storage.flush?.();
-  return { slug: finalSlug, url: `${BASE_URL}/a/${finalSlug}/`, files: files.length };
+  return { slug: finalSlug, url: tokenedUrl(meta), files: files.length, visibility: meta.visibility || 'public' };
 }
 
 // Accepts an array of strings or a comma-separated string (JSON bodies, zip
@@ -862,29 +881,44 @@ async function saveArtifact({ content, type = 'html', slug, title, expiresAt, fr
   if (frame !== undefined) meta.frame = frame;
   if (tagList !== undefined) meta.tags = tagList.length ? tagList : undefined;
   if (projectName !== undefined) meta.project = projectName || undefined;
-  if (visibility !== undefined) {
-    if (visibility === 'password') {
-      meta.visibility = 'password';
-      meta.password = await hashPassword(password);
-    } else if (visibility === 'private') {
-      meta.visibility = 'private';
-      delete meta.password;
-    } else {
-      delete meta.visibility; // public is the default → omit
-      delete meta.password;
-    }
+  // New artifacts with no explicit visibility take DEFAULT_VISIBILITY. Replacing an
+  // existing artifact with no visibility arg preserves whatever it had (carried by the
+  // `...existing` spread), so an overwrite never silently flips access.
+  const effVisibility =
+    visibility !== undefined ? visibility : existing ? undefined : DEFAULT_VISIBILITY;
+  if (effVisibility === 'password') {
+    meta.visibility = 'password';
+    meta.password = await hashPassword(password);
+  } else if (effVisibility === 'private') {
+    meta.visibility = 'private';
+    delete meta.password;
+  } else if (effVisibility === 'public') {
+    delete meta.visibility; // public is the omitted default
+    delete meta.password;
   } else if (password !== undefined && meta.visibility === 'password') {
     if (typeof password !== 'string' || !password) {
       throw new ApiError(400, 'password must be a non-empty string');
     }
     meta.password = await hashPassword(password); // rotate on an existing password artifact
   }
+  seedTokenEpoch(meta);
   // meta.json LAST as the commit marker (see storage/index.js write-ordering contract).
   await storage.put(`${finalSlug}/meta.json`, JSON.stringify(meta, null, 2), {
     contentType: 'application/json',
   });
   await storage.flush?.(); // durably commit the completed write (git); no-op elsewhere
-  return { slug: finalSlug, url: `${BASE_URL}/a/${finalSlug}` };
+  return { slug: finalSlug, url: tokenedUrl(meta), visibility: meta.visibility || 'public' };
+}
+
+// A non-public artifact carries a non-secret epoch so capability tokens can be minted and
+// revoked; a public one carries none. Seed once; never reset a live epoch to 0 (that would
+// silently un-revoke). Idempotent, so every write path can call it.
+function seedTokenEpoch(meta) {
+  if (meta.visibility === 'private' || meta.visibility === 'password') {
+    if (meta.tokenEpoch === undefined) meta.tokenEpoch = 0;
+  } else {
+    delete meta.tokenEpoch;
+  }
 }
 
 // Allowlist (not denylist) so a new meta field can never leak by omission. Returns only
@@ -996,12 +1030,25 @@ async function patchArtifact(slug, patch) {
     }
   }
 
+  // Rotating a link is a single epoch bump — it invalidates every issued token AND live
+  // unlock cookie for the slug on the next request.
+  if (patch.rotateToken === true) {
+    if (meta.visibility !== 'private' && meta.visibility !== 'password') {
+      throw new ApiError(400, 'only private or password artifacts have a link to rotate');
+    }
+    meta.tokenEpoch = metaEpoch(meta) + 1;
+  }
+
+  // Seed the epoch when an artifact enters private/password (covers a pre-existing public
+  // artifact flipped to private); drop it when it becomes public.
+  seedTokenEpoch(meta);
+
   meta.updatedAt = new Date().toISOString();
   await storage.put(`${activeSlug}/meta.json`, JSON.stringify(meta, null, 2), {
     contentType: 'application/json',
   });
   await storage.flush?.();
-  return { slug: meta.slug, url: `${BASE_URL}/a/${meta.slug}` };
+  return { slug: meta.slug, url: tokenedUrl(meta), visibility: meta.visibility || 'public' };
 }
 
 async function deleteArtifact(slug) {
@@ -1333,8 +1380,8 @@ app.post('/api/artifacts/zip', requireAuth('publish'), zipBody, async (req, res,
     if (!Buffer.isBuffer(req.body) || !req.body.length) {
       throw new ApiError(400, 'raw zip body required (Content-Type: application/zip)');
     }
-    const { slug, title, expiresAt, tags, project } = req.query;
-    res.status(201).json(await saveZipArtifact(req.body, { slug, title, expiresAt, tags, project }));
+    const { slug, title, expiresAt, tags, project, visibility, password } = req.query;
+    res.status(201).json(await saveZipArtifact(req.body, { slug, title, expiresAt, tags, project, visibility, password }));
   } catch (err) {
     next(err);
   }
@@ -1360,6 +1407,19 @@ app.delete('/api/artifacts/:slug', requireAuth('full'), async (req, res, next) =
   try {
     await deleteArtifact(req.params.slug);
     res.json({ deleted: req.params.slug });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Mint a fresh shareable link without mutating the artifact. The dashboard calls this to
+// copy a private/password link on demand, so tokens are never embedded in list rows (which
+// would write them into logs on every dashboard load).
+app.get('/api/artifacts/:slug/link', requireAuth('read'), async (req, res, next) => {
+  try {
+    const meta = SLUG_RE.test(req.params.slug) ? await readMeta(req.params.slug) : null;
+    if (!meta) throw new ApiError(404, `slug "${req.params.slug}" not found`);
+    res.json({ url: tokenedUrl(meta), visibility: meta.visibility || 'public' });
   } catch (err) {
     next(err);
   }
