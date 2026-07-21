@@ -46,6 +46,8 @@ Or keep the configuration in a file: `cp .env.example .env`, edit it, then `npm 
 | `DATA_DIR` | no | `/data` | `local` backend only — directory of plain files |
 | `PORT` | no | `3000` | Listen port |
 | `TRUST_PROXY` | no | `none` | Client-IP source for rate limiting: `none` (socket address), `cloudflare` (`CF-Connecting-IP`), or `xff` (last hop of `X-Forwarded-For`). See the security note below. |
+| `DEFAULT_VISIBILITY` | no | `private` | Visibility for a new artifact when the caller gives none: `private` or `public`. Ships `private` (opt in to public). |
+| `CAP_TOKEN_TTL_DAYS` | no | `30` | Lifetime of a capability share link (`?k=` token) for `private`/`password` artifacts. |
 
 Day-to-day, give CLI and MCP clients scoped [managed API keys](auth.md) rather than the bootstrap key. Auth state (admin account, session-signing secret, managed keys) persists under a reserved `auth.json` object through the storage backend, so it survives a restart on every backend with no migration. Like the frame config, it is loaded once at boot; running **multiple replicas** against a shared backend is best paired with a pre-seeded admin (`ARTIFACTS_ADMIN_*`) — a session cookie signed by one replica's boot-time secret is not valid on a replica that started before that secret was written.
 

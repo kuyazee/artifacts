@@ -79,4 +79,9 @@ The `/api/artifacts*` and `/api/config` routes accept the **admin session cookie
 
 ## Artifact visibility (a third, per-artifact credential)
 
-Separate from admin/keys, each artifact can be `public` (default), `private`, or `password` — see [Visibility](api.md#visibility). Viewing a gated artifact uses neither the admin session nor an API key: the visitor enters a password at the artifact URL, and a correct answer sets a signed, HttpOnly cookie scoped to `Path=/a/<slug>` (7-day expiry) so that one artifact stays unlocked. `private` validates the **admin password**; `password` validates the artifact's own shared password. Rotating or clearing a password does not revoke unlock cookies already issued — they lapse at their 7-day TTL. `POST /a/:slug/unlock` is rate-limited to 10 failures per hour per client IP + slug.
+Separate from admin/keys, each artifact can be `public`, `private` (the **default**), or `password` — see [Visibility](api.md#visibility). Viewing a gated artifact uses neither the admin session nor an API key.
+
+- **`private`** is viewed through a **capability link**: the artifact's write returns a `?k=<token>` URL. Opening it sets a signed, HttpOnly unlock cookie scoped to `Path=/a/<slug>` and `302`s to a clean URL. No password is involved, so there is no admin-credential prompt on the artifact origin to phish. The token is an HMAC grant (`typ:'cap'`, bound to the slug and a per-artifact epoch) — no per-artifact secret is stored.
+- **`password`** validates the artifact's own shared password at `POST /a/:slug/unlock`, which sets the same kind of unlock cookie. Rate-limited to 10 failures per hour per client IP + slug.
+
+Both the capability token and the unlock cookie bind the artifact's epoch, so `PATCH {"rotateToken": true}` (bump the epoch) revokes every issued link **and** every live cookie for that slug on the next request. Absent a rotate, tokens lapse at `CAP_TOKEN_TTL_DAYS` (default 30) and cookies at their 7-day TTL.
