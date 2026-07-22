@@ -16,7 +16,7 @@
     --rim-soft: #382A1D;
     --sand: #F3E9DA;
     --taupe: #B89F86;
-    --taupe-dim: #8B7660;
+    --taupe-dim: #A8937B;
     --cream: #ECD6A2;
     --cream-hi: #F6E4B9;
     --rose: #E4A6AD;
@@ -56,6 +56,7 @@
     font-family: inherit; cursor: pointer; transition: background .12s;
   }
   button:hover { background: var(--cream-hi); }
+  button.busy { opacity: .65; pointer-events: none; }
 
   /* palmette mark — rose leaf, cream stem (echoes the Ibiza print) */
   .mark { display: block; }
@@ -72,7 +73,12 @@
   #lock .mark { width: 34px; height: 34px; margin: 0 auto 12px; }
   #lock h1 { font-size: 22px; margin: 0 0 4px; color: var(--cream); letter-spacing: -.01em; }
   #lock p { color: var(--taupe); font-size: 13px; margin: 0 0 20px; }
-  #lock input { width: 100%; text-align: center; margin-bottom: 12px; }
+  #lock label {
+    display: block; text-align: left; font-size: 11px; font-weight: 600;
+    letter-spacing: .05em; text-transform: uppercase; color: var(--taupe);
+    margin: 0 0 5px 2px;
+  }
+  #lock input { width: 100%; margin-bottom: 12px; }
   #lock button { width: 100%; }
   #lockError { color: var(--brick); font-size: 13px; margin-top: 10px; min-height: 18px; }
   .shake { animation: shake .35s; }
@@ -115,7 +121,7 @@
   .bar-actions { display: flex; align-items: center; gap: 6px; position: relative; }
   .iconbtn {
     display: inline-flex; align-items: center; justify-content: center; gap: 7px;
-    height: 38px; min-width: 38px; padding: 0 9px;
+    height: 40px; min-width: 40px; padding: 0 9px;
     background: transparent; border: 1px solid var(--rim); border-radius: 9px;
     color: var(--taupe); cursor: pointer; transition: color .12s, border-color .12s, background .12s, transform .06s;
   }
@@ -162,6 +168,12 @@
   .form { display: flex; flex-direction: column; gap: 12px; }
   .form .row { display: flex; gap: 10px; flex-wrap: wrap; }
   .form .row > * { flex: 1; min-width: 120px; }
+  .form label.f {
+    display: flex; flex-direction: column; gap: 5px;
+    font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
+    color: var(--taupe);
+  }
+  .form label.f > input, .form label.f > select, .form label.f > textarea { width: 100%; }
   .form textarea { min-height: 150px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; resize: vertical; }
   .form .browse { font-size: 12px; color: var(--taupe-dim); text-align: center; padding: 2px 0; }
   .form .foot { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 2px; }
@@ -259,7 +271,7 @@
   .time { font-size: 11px; color: var(--taupe-dim); font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; }
 
   .chip {
-    display: inline-block; padding: 2px 9px; border-radius: 2em;
+    display: inline-block; padding: 5px 12px; border-radius: 2em;
     background: var(--field); border: 1px solid var(--rim); color: var(--taupe);
     font-size: 11px; font-weight: 500; cursor: pointer; transition: .12s;
   }
@@ -268,12 +280,11 @@
 
   .item-actions {
     display: flex; align-items: center; gap: 4px; flex: none; flex-wrap: wrap; justify-content: flex-end;
-    opacity: .6; transition: opacity .15s;
   }
-  .item:hover .item-actions { opacity: 1; }
   .act {
+    display: inline-flex; align-items: center; min-height: 40px;
     background: transparent; border: 1px solid transparent; border-radius: 7px;
-    color: var(--taupe); font-size: 12px; font-weight: 500; padding: 5px 9px; white-space: nowrap; transition: .12s;
+    color: var(--taupe); font-size: 12px; font-weight: 500; padding: 5px 11px; white-space: nowrap; transition: .12s;
   }
   .act:hover { color: var(--sand); background: var(--field); border-color: var(--rim); }
   .act.copy { color: var(--cream); border-color: var(--rim); }
@@ -281,27 +292,73 @@
   .act.del { color: var(--brick); }
   .act.del:hover { background: var(--danger-bg); border-color: var(--danger-rim); color: var(--brick); }
 
-  /* overflow menu */
+  /* per-row dropdown menus (view + overflow) */
   .more { position: relative; display: inline-flex; }
-  .act.more-btn { font-weight: 700; letter-spacing: 1px; padding: 5px 10px; }
+  .act.more-btn { font-weight: 700; letter-spacing: 1px; padding: 5px 12px; }
   .menu {
     position: absolute; top: calc(100% + 6px); right: 0; z-index: 30;
-    min-width: 158px; padding: 5px; display: none; flex-direction: column; gap: 2px;
+    min-width: 168px; padding: 5px; display: none; flex-direction: column; gap: 2px;
     background: var(--cocoa-hi); border: 1px solid var(--rim); border-radius: 10px;
     box-shadow: 0 18px 44px -20px #000;
   }
   .more.open .menu { display: flex; }
-  .item-actions.menu-open { opacity: 1; }
-  .menu .act { width: 100%; justify-content: flex-start; text-align: left; }
+  .menu .act { width: 100%; justify-content: flex-start; text-align: left; min-height: 36px; gap: 8px; }
+  .menu .act::before { content: ""; width: 13px; flex: none; }
+  .menu .act.on { color: var(--cream); }
+  .menu .act.on::before { content: "✓"; }
   .menu .act:hover { background: var(--field); }
 
   .empty { padding: 26px; text-align: center; color: var(--taupe-dim); font-size: 13px; border: 1px dashed var(--rim-soft); border-radius: 12px; }
 
+  /* ---- modal dialog (replaces native prompt/confirm) ---- */
+  .dlg-scrim {
+    position: fixed; inset: 0; z-index: 60; background: rgba(14, 8, 4, .55);
+    display: none; align-items: center; justify-content: center; padding: 20px;
+  }
+  .dlg-scrim.open { display: flex; }
+  .dialog {
+    width: 380px; max-width: 100%; padding: 18px;
+    background: var(--cocoa-hi); border: 1px solid var(--rim); border-radius: 14px;
+    box-shadow: 0 26px 60px -28px #000;
+  }
+  .dialog h3 { margin: 0 0 6px; font-size: 14px; color: var(--cream); }
+  .dialog p { margin: 0 0 12px; font-size: 13px; color: var(--taupe); line-height: 1.5; overflow-wrap: break-word; }
+  .dialog input { width: 100%; }
+  .dialog .choices { display: flex; flex-direction: column; gap: 4px; }
+  .dialog .choices .act { width: 100%; justify-content: flex-start; text-align: left; gap: 8px; }
+  .dialog .choices .act::before { content: ""; width: 13px; flex: none; }
+  .dialog .choices .act.on { color: var(--cream); }
+  .dialog .choices .act.on::before { content: "✓"; }
+  .dialog .choices .act:hover { background: var(--field); }
+  .dialog .foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+  .dialog button.ghost {
+    background: transparent; color: var(--taupe); border: 1px solid var(--rim); font-weight: 600;
+  }
+  .dialog button.ghost:hover { color: var(--sand); border-color: var(--taupe); background: transparent; }
+  .dialog button.danger { background: var(--brick); color: #2A1108; }
+
+  /* ---- toast ---- */
+  #toast {
+    position: fixed; left: 50%; bottom: 24px; z-index: 70;
+    transform: translateX(-50%) translateY(8px);
+    background: var(--cocoa-hi); border: 1px solid var(--rim); color: var(--sand);
+    padding: 10px 16px; border-radius: 10px; font-size: 13px; max-width: 90vw;
+    opacity: 0; pointer-events: none; transition: opacity .15s, transform .15s;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #toast.err { background: var(--danger-bg); border-color: var(--danger-rim); color: var(--brick); }
+
   @media (max-width: 560px) {
+    .tagline { display: none; }
     .item { flex-direction: column; align-items: stretch; gap: 10px; }
-    .item-actions { justify-content: flex-start; opacity: 1; }
+    .item-actions { justify-content: flex-start; }
     /* actions stack to the left here, so open the menu rightward */
     .menu { left: 0; right: auto; }
+  }
+  @media (pointer: coarse) {
+    .iconbtn { height: 44px; min-width: 44px; }
+    .act { min-height: 44px; }
+    .chip { padding: 8px 14px; }
   }
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 </style>
@@ -322,8 +379,10 @@
     </svg>
     <h1>artifacts</h1>
     <p id="lockSub">Sign in</p>
-    <input id="lockUser" type="text" placeholder="Username" autocomplete="username" autofocus>
-    <input id="lockPass" type="password" placeholder="Password" autocomplete="current-password">
+    <label for="lockUser">Username</label>
+    <input id="lockUser" type="text" autocomplete="username" autofocus>
+    <label for="lockPass">Password</label>
+    <input id="lockPass" type="password" autocomplete="current-password">
     <button id="lockSubmit">Sign in</button>
     <div id="lockError"></div>
   </div>
@@ -373,35 +432,53 @@
         <div class="pop-body">
           <div class="form">
             <div class="row">
-              <select id="type">
-                <option value="html">html</option>
-                <option value="jsx">jsx</option>
-                <option value="tsx">tsx</option>
-                <option value="md">md</option>
-              </select>
-              <select id="frame" title="Top viewer frame">
-                <option value="default">frame: default</option>
-                <option value="on">frame: on</option>
-                <option value="off">frame: off</option>
-              </select>
+              <label class="f">Type
+                <select id="type">
+                  <option value="html">html</option>
+                  <option value="jsx">jsx</option>
+                  <option value="tsx">tsx</option>
+                  <option value="md">md</option>
+                </select>
+              </label>
+              <label class="f">Frame
+                <select id="frame" title="Top viewer frame">
+                  <option value="default">Default</option>
+                  <option value="on">On</option>
+                  <option value="off">Off</option>
+                </select>
+              </label>
             </div>
             <div class="row">
-              <select id="visibility" title="Who can view this artifact">
-                <option value="private">visibility: private</option>
-                <option value="public">visibility: public</option>
-                <option value="password">visibility: password</option>
-              </select>
-              <input id="password" type="password" placeholder="view password" autocomplete="new-password" style="display:none">
+              <label class="f">Visibility
+                <select id="visibility" title="Who can view this artifact">
+                  <option value="private">Private</option>
+                  <option value="public">Public</option>
+                  <option value="password">Password</option>
+                </select>
+              </label>
+              <label class="f" id="passwordWrap" style="display:none">View password
+                <input id="password" type="password" autocomplete="new-password">
+              </label>
             </div>
             <div class="row">
-              <input id="slug" placeholder="custom slug (optional)">
-              <input id="title" placeholder="title (optional)">
+              <label class="f">Slug
+                <input id="slug" placeholder="auto-generated">
+              </label>
+              <label class="f">Title
+                <input id="title" placeholder="optional">
+              </label>
             </div>
             <div class="row">
-              <input id="tags" placeholder="tags, comma-separated">
-              <input id="project" placeholder="project">
+              <label class="f">Tags
+                <input id="tags" placeholder="comma-separated">
+              </label>
+              <label class="f">Project
+                <input id="project" placeholder="optional">
+              </label>
             </div>
-            <textarea id="content" placeholder="Paste HTML, a React component with a default export, or Markdown…" spellcheck="false"></textarea>
+            <label class="f">Content
+              <textarea id="content" placeholder="Paste HTML, a React component with a default export, or Markdown…" spellcheck="false"></textarea>
+            </label>
             <div class="browse">or <a href="#" id="browseLink">browse files</a> to upload instead</div>
             <div class="foot"><button id="publish">Publish</button></div>
           </div>
@@ -432,13 +509,17 @@
         <div class="pop-body">
           <div class="keys">
             <div class="form">
-              <input id="keyName" placeholder="Key name (e.g. laptop-cli)">
-              <div class="scopes">
+              <label class="f">Key name
+                <input id="keyName" placeholder="e.g. laptop-cli">
+              </label>
+              <div class="scopes" role="group" aria-label="Scopes">
                 <label class="check"><input type="checkbox" id="scopeRead"><span>read</span></label>
                 <label class="check"><input type="checkbox" id="scopePublish" checked><span>publish</span></label>
                 <label class="check"><input type="checkbox" id="scopeFull"><span>full</span></label>
               </div>
-              <input id="keyExpiry" type="text" placeholder="expiry (optional, e.g. 2026-12-31)">
+              <label class="f">Expires
+                <input id="keyExpiry" type="text" placeholder="optional, e.g. 2026-12-31">
+              </label>
               <div class="foot"><button id="createKey">Create key</button></div>
             </div>
             <div id="keyReveal" class="key-reveal" hidden></div>
@@ -460,7 +541,7 @@
 
   <div id="drop">
     <strong>Drop files to publish</strong> &nbsp;·&nbsp; or click to browse
-    <div class="hint">.html · .jsx · .tsx · .md · .zip — published instantly, link copied to your clipboard</div>
+    <div class="hint">.html · .jsx · .tsx · .md · .zip. Published instantly, link copied to your clipboard.</div>
   </div>
   <input id="file" type="file" accept=".html,.htm,.jsx,.tsx,.md,.markdown,.zip" multiple hidden>
 
@@ -474,6 +555,14 @@
 
 <!-- outside-click catcher for popovers -->
 <div class="scrim" id="scrim"></div>
+
+<!-- modal dialog (replaces native prompt/confirm) -->
+<div class="dlg-scrim" id="dlgScrim">
+  <div class="dialog" id="dialog" role="dialog" aria-modal="true"></div>
+</div>
+
+<!-- transient status / error messages -->
+<div id="toast" role="status" aria-live="polite"></div>
 
 <script>
   const $ = (id) => document.getElementById(id);
@@ -654,10 +743,10 @@
 
   // Show the password box only when visibility is "password".
   $('visibility').addEventListener('change', () => {
-    $('password').style.display = $('visibility').value === 'password' ? '' : 'none';
+    $('passwordWrap').style.display = $('visibility').value === 'password' ? '' : 'none';
   });
 
-  $('publish').addEventListener('click', async () => {
+  $('publish').addEventListener('click', () => busy($('publish'), 'Publishing…', async () => {
     const body = { content: $('content').value, type: $('type').value };
     if ($('slug').value) body.slug = $('slug').value;
     if ($('title').value) body.title = $('title').value;
@@ -666,7 +755,7 @@
     if ($('project').value.trim()) body.project = $('project').value.trim();
     body.visibility = $('visibility').value; // authoritative: what the select shows is what you get
     if ($('visibility').value === 'password') {
-      if (!$('password').value) { addResult('pasted ' + body.type, 'a view password is required', false); return; }
+      if (!$('password').value) { toast('A view password is required.', true); return; }
       body.password = $('password').value;
     }
     const r = await publish(body);
@@ -678,40 +767,18 @@
       $('project').value = '';
       $('password').value = '';
       $('visibility').value = 'private';
-      $('password').style.display = 'none';
+      $('passwordWrap').style.display = 'none';
       closePops();
       loadList();
     } else {
       addResult('pasted ' + body.type, r.data.error || ('HTTP ' + r.status), false);
     }
-  });
+  }));
 
   // ---- list ----
 
   let allItems = [];
   const collapsed = new Set();
-  let inlineN = 8; // how many row actions stay inline before overflowing into ⋯
-
-  // Worst-case rendered widths (px) per action, in priority order:
-  // Copy, frame, visibility, Tags, Project, Rename, Disable, expiry(dated), Delete.
-  const ACT_W = [58, 96, 104, 56, 74, 76, 74, 130, 66];
-
-  // Greedily fit actions inline against the list width using their real widths
-  // (the dated "expires …" and "frame: auto" labels are wide), reserving room
-  // for the ⋯ button; the rest overflow into the menu.
-  function computeInlineCount() {
-    const w = $('rows').clientWidth || 860;
-    const budget = Math.max(0, w - 200); // reserve for slug / title / meta
-    const GAP = 6, MORE = 46;
-    let sum = 0;
-    for (const bw of ACT_W) sum += bw + GAP;
-    if (sum <= budget) return ACT_W.length; // everything fits, no menu
-    let used = MORE, n = 0;
-    for (const bw of ACT_W) {
-      if (used + bw + GAP <= budget) { used += bw + GAP; n++; } else break;
-    }
-    return Math.max(1, n);
-  }
 
   async function loadList() {
     try {
@@ -757,8 +824,134 @@
     setTimeout(() => { btn.textContent = prev; }, 1200);
   }
 
+  function toast(msg, isError) {
+    const t = $('toast');
+    t.textContent = msg;
+    t.classList.toggle('err', !!isError);
+    t.classList.add('show');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => t.classList.remove('show'), 3200);
+  }
+
+  // Disable a button and swap its label while an async action runs.
+  async function busy(btn, label, fn) {
+    if (btn.classList.contains('busy')) return;
+    const prev = btn.textContent;
+    btn.classList.add('busy');
+    if (label) btn.textContent = label;
+    try {
+      return await fn();
+    } finally {
+      btn.classList.remove('busy');
+      btn.textContent = prev;
+    }
+  }
+
+  // Styled replacement for prompt()/confirm(). Returns a promise:
+  //   input mode   → entered string, or null on cancel
+  //   choices mode → chosen value, or null on cancel
+  //   confirm mode → true, or null on cancel
+  let dlgClose = null;
+  function dialog(opts) {
+    return new Promise((resolve) => {
+      const scrim = $('dlgScrim');
+      const box = $('dialog');
+      box.innerHTML = '';
+      let done = false;
+      const finish = (v) => {
+        if (done) return;
+        done = true;
+        scrim.classList.remove('open');
+        document.removeEventListener('keydown', onKey, true);
+        dlgClose = null;
+        resolve(v);
+      };
+      dlgClose = finish;
+      const onKey = (e) => {
+        if (e.key === 'Escape') { e.stopPropagation(); finish(null); }
+      };
+
+      const h = document.createElement('h3');
+      h.textContent = opts.title;
+      box.appendChild(h);
+      if (opts.body) {
+        const p = document.createElement('p');
+        p.textContent = opts.body;
+        box.appendChild(p);
+      }
+
+      let input = null;
+      if (opts.choices) {
+        const wrap = document.createElement('div');
+        wrap.className = 'choices';
+        for (const c of opts.choices) {
+          const b = actBtn(c.label, c.value === opts.current ? 'on' : '');
+          b.addEventListener('click', () => finish(c.value));
+          wrap.appendChild(b);
+        }
+        box.appendChild(wrap);
+      } else if (opts.input) {
+        input = document.createElement('input');
+        input.type = opts.password ? 'password' : 'text';
+        input.value = opts.value || '';
+        if (opts.placeholder) input.placeholder = opts.placeholder;
+        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') finish(input.value); });
+        box.appendChild(input);
+      }
+
+      const foot = document.createElement('div');
+      foot.className = 'foot';
+      const cancel = document.createElement('button');
+      cancel.className = 'ghost';
+      cancel.textContent = 'Cancel';
+      cancel.addEventListener('click', () => finish(null));
+      foot.appendChild(cancel);
+      if (!opts.choices) {
+        const ok = document.createElement('button');
+        if (opts.danger) ok.className = 'danger';
+        ok.textContent = opts.confirmText || 'Save';
+        ok.addEventListener('click', () => finish(input ? input.value : true));
+        foot.appendChild(ok);
+      }
+      box.appendChild(foot);
+
+      document.addEventListener('keydown', onKey, true);
+      scrim.classList.add('open');
+      const target = input || box.querySelector('.choices .act.on') || cancel;
+      setTimeout(() => target.focus(), 30);
+    });
+  }
+  $('dlgScrim').addEventListener('click', (e) => {
+    if (e.target === $('dlgScrim') && dlgClose) dlgClose(null);
+  });
+
+  // Apply a change optimistically: update the local item, re-render, then send
+  // the PATCH. On failure, restore the previous item and explain in a toast.
+  async function patchItem(a, body, local) {
+    const idx = allItems.findIndex((x) => x.slug === a.slug);
+    if (idx < 0) return;
+    const prev = allItems[idx];
+    allItems[idx] = { ...prev, ...local, updatedAt: new Date().toISOString() };
+    renderList();
+    try {
+      const res = await fetch('/api/artifacts/' + a.slug, {
+        method: 'PATCH', headers: headers(), body: JSON.stringify(body),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || 'update failed');
+      if (d.slug && d.slug !== allItems[idx].slug) {
+        allItems[idx] = { ...allItems[idx], slug: d.slug };
+        renderList();
+      }
+      return d;
+    } catch (err) {
+      allItems[idx] = prev;
+      renderList();
+      toast(err.message || 'update failed', true);
+    }
+  }
+
   function renderList() {
-    inlineN = computeInlineCount();
     // drop collapse state for projects that no longer exist (renamed / cleared)
     const live = new Set(allItems.map((a) => a.project || ''));
     for (const k of collapsed) if (!live.has(k)) collapsed.delete(k);
@@ -773,7 +966,7 @@
     const rows = $('rows');
     rows.innerHTML = '';
 
-    if (!allItems.length) return showEmpty('Nothing published yet — drop a file above to start.');
+    if (!allItems.length) return showEmpty('Nothing published yet. Drop a file above to start.');
     if (!filtered.length) return showEmpty('No matches for “' + q + '”.');
 
     // No projects in use yet → a plain flat list.
@@ -876,199 +1069,207 @@
       meta.appendChild(time);
       body.appendChild(meta);
 
-      // actions
+      // actions — Copy, View, and a ⋯ menu holding everything else
       const actions = document.createElement('div');
       actions.className = 'item-actions';
 
       const nonPublic = a.visibility === 'private' || a.visibility === 'password';
       const copy = actBtn('Copy', 'copy');
+      copy.title = 'Copy the share link';
       copy.addEventListener('click', async () => {
-        try {
-          // Public: the bare link is the share link. Non-public: mint a fresh capability
-          // link (?k=…) on demand so the token is never persisted in the list rows.
-          let link = location.origin + '/a/' + a.slug + (a.type === 'zip' ? '/' : '');
-          if (nonPublic) {
-            const res = await fetch('/api/artifacts/' + a.slug + '/link', { headers: headers() });
-            if (!res.ok) throw new Error();
-            link = (await res.json()).url;
+        const ok = await busy(copy, 'Copying…', async () => {
+          try {
+            // Public: the bare link is the share link. Non-public: mint a fresh capability
+            // link (?k=…) on demand so the token is never persisted in the list rows.
+            let link = location.origin + '/a/' + a.slug + (a.type === 'zip' ? '/' : '');
+            if (nonPublic) {
+              const res = await fetch('/api/artifacts/' + a.slug + '/link', { headers: headers() });
+              if (!res.ok) throw new Error();
+              link = (await res.json()).url;
+            }
+            await navigator.clipboard.writeText(link);
+            return true;
+          } catch {
+            return false;
           }
-          await navigator.clipboard.writeText(link);
-          flash(copy, 'Copied');
-        } catch {
-          flash(copy, 'Copy failed');
-        }
+        });
+        flash(copy, ok ? 'Copied' : 'Copy failed');
       });
 
-      const ren = actBtn('Rename', 'ren');
-      ren.addEventListener('click', async () => {
-        const ns = prompt('New slug for “' + a.slug + '”', a.slug);
-        if (!ns || ns === a.slug) return;
-        const res = await fetch('/api/artifacts/' + a.slug, {
-          method: 'PATCH', headers: headers(), body: JSON.stringify({ slug: ns }),
+      // dropdown builder shared by the View menu and the ⋯ menu
+      function dropdown(btnLabel, btnCls, fill) {
+        const wrap = document.createElement('div');
+        wrap.className = 'more';
+        const btn = actBtn(btnLabel, btnCls);
+        btn.setAttribute('aria-haspopup', 'true');
+        btn.setAttribute('aria-expanded', 'false');
+        const menu = document.createElement('div');
+        menu.className = 'menu';
+        wrap.append(btn, menu);
+        btn.addEventListener('click', () => {
+          const open = wrap.classList.toggle('open');
+          btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+          if (open && !menu.childElementCount) fill(menu);
         });
-        if (!res.ok) {
-          const d = await res.json().catch(() => ({}));
-          alert(d.error || 'rename failed');
-        }
-        loadList();
-      });
-
-      const projBtn = actBtn('Project', 'proj');
-      projBtn.addEventListener('click', async () => {
-        const v = prompt('Project for “' + a.slug + '” (empty to clear)', a.project || '');
-        if (v === null) return;
-        const res = await fetch('/api/artifacts/' + a.slug, {
-          method: 'PATCH', headers: headers(), body: JSON.stringify({ project: v.trim() }),
-        });
-        if (!res.ok) {
-          const d = await res.json().catch(() => ({}));
-          alert(d.error || 'project update failed');
-        }
-        loadList();
-      });
-
-      const frm = actBtn('', 'frm');
-      const fstate = a.frame === true ? 'on' : a.frame === false ? 'off' : 'auto';
-      frm.textContent = 'frame: ' + fstate;
-      frm.title = 'Toggle top frame (auto → on → off)';
-      frm.addEventListener('click', async () => {
-        // cycle: auto (undefined) -> on (true) -> off (false) -> auto (null)
-        const next = a.frame === undefined ? true : a.frame === true ? false : null;
-        await fetch('/api/artifacts/' + a.slug, {
-          method: 'PATCH', headers: headers(), body: JSON.stringify({ frame: next }),
-        });
-        loadList();
-      });
-
-      const vis = actBtn('', 'vis');
-      const vstate = a.visibility === 'private' ? 'private' : a.visibility === 'password' ? 'password' : 'public';
-      vis.textContent = 'view: ' + vstate;
-      vis.title = 'Change visibility (public → private → password)';
-      vis.addEventListener('click', async () => {
-        // cycle: public -> private -> password -> public
-        const next = vstate === 'public' ? 'private' : vstate === 'private' ? 'password' : 'public';
-        const body = { visibility: next };
-        if (next === 'password') {
-          const pw = prompt('View password for “' + a.slug + '”');
-          if (!pw) return;
-          body.password = pw;
-        }
-        const res = await fetch('/api/artifacts/' + a.slug, {
-          method: 'PATCH', headers: headers(), body: JSON.stringify(body),
-        });
-        if (!res.ok) {
-          const d = await res.json().catch(() => ({}));
-          alert(d.error || 'visibility update failed');
-        }
-        loadList();
-      });
-
-      // Rotate the share link — only meaningful for a private/password artifact. A single
-      // epoch bump invalidates every link already handed out and every live unlock cookie.
-      const rot = nonPublic ? actBtn('Rotate link', 'rot') : null;
-      if (rot) {
-        rot.title = 'Invalidate every share link handed out for this artifact';
-        rot.addEventListener('click', async () => {
-          if (!confirm('Rotate the link for “' + a.slug + '”? Every link you have already shared stops working.')) return;
-          const res = await fetch('/api/artifacts/' + a.slug, {
-            method: 'PATCH', headers: headers(), body: JSON.stringify({ rotateToken: true }),
-          });
-          if (!res.ok) {
-            const d = await res.json().catch(() => ({}));
-            alert(d.error || 'rotate failed');
-            return;
-          }
-          const link = (await res.json()).url;
-          await navigator.clipboard.writeText(link).catch(() => {});
-          flash(rot, 'Rotated — new link copied');
-        });
+        return { wrap, btn, menu };
       }
 
-      const tagbtn = actBtn('Tags', 'tagbtn');
-      tagbtn.addEventListener('click', async () => {
-        const v = prompt('Tags for “' + a.slug + '” (comma-separated, empty to clear)',
-          (a.tags || []).join(', '));
-        if (v === null) return;
-        const res = await fetch('/api/artifacts/' + a.slug, {
-          method: 'PATCH', headers: headers(), body: JSON.stringify({ tags: v.trim() }),
+      function menuItem(menu, label, cls, onPick) {
+        const b = actBtn(label, cls);
+        b.addEventListener('click', () => { closeMenu(menu.parentElement); onPick(); });
+        menu.appendChild(b);
+        return b;
+      }
+
+      // View — explicit choice menu; changing visibility is never a blind cycle
+      const vstate = a.visibility === 'private' ? 'private' : a.visibility === 'password' ? 'password' : 'public';
+      const view = dropdown('View: ' + vstate, 'vis', (menu) => {
+        const pick = (value, label) => menuItem(menu, label, value === vstate ? 'on' : '', async () => {
+          if (value === vstate) return;
+          if (value === 'password') {
+            const pw = await dialog({
+              title: 'Password-protect “' + a.slug + '”',
+              body: 'Viewers need this shared password to open the artifact.',
+              input: true, password: true, placeholder: 'View password', confirmText: 'Protect',
+            });
+            if (!pw) return;
+            patchItem(a, { visibility: 'password', password: pw }, { visibility: 'password' });
+            return;
+          }
+          if (value === 'public' && nonPublic) {
+            const ok = await dialog({
+              title: 'Make “' + a.slug + '” public?',
+              body: 'Anyone with the bare link can view it. Existing capability links keep working.',
+              confirmText: 'Make public',
+            });
+            if (!ok) return;
+          }
+          patchItem(a, { visibility: value }, { visibility: value });
         });
-        if (!res.ok) {
-          const d = await res.json().catch(() => ({}));
-          alert(d.error || 'tags update failed');
+        pick('private', 'Private');
+        pick('public', 'Public');
+        pick('password', 'Password…');
+      });
+      view.btn.title = 'Change who can view this artifact';
+
+      const fstate = a.frame === true ? 'on' : a.frame === false ? 'off' : 'auto';
+      const more = dropdown('⋯', 'more-btn', (menu) => {
+        menuItem(menu, 'Frame: ' + fstate + '…', '', async () => {
+          const v = await dialog({
+            title: 'Top frame for “' + a.slug + '”',
+            body: 'The slim viewer toolbar shown above the artifact.',
+            choices: [
+              { value: 'auto', label: 'Auto (follow the global default)' },
+              { value: 'on', label: 'On' },
+              { value: 'off', label: 'Off' },
+            ],
+            current: fstate,
+          });
+          if (v === null || v === fstate) return;
+          patchItem(a, { frame: v === 'auto' ? null : v === 'on' },
+            { frame: v === 'auto' ? undefined : v === 'on' });
+        });
+
+        menuItem(menu, 'Tags…', '', async () => {
+          const v = await dialog({
+            title: 'Tags for “' + a.slug + '”',
+            body: 'Comma-separated. Leave empty to clear.',
+            input: true, value: (a.tags || []).join(', '),
+          });
+          if (v === null) return;
+          const parsed = v.split(',').map((t) => t.trim()).filter(Boolean);
+          patchItem(a, { tags: v.trim() }, { tags: parsed });
+        });
+
+        menuItem(menu, 'Project…', '', async () => {
+          const v = await dialog({
+            title: 'Project for “' + a.slug + '”',
+            body: 'Groups this artifact in the list. Leave empty to clear.',
+            input: true, value: a.project || '',
+          });
+          if (v === null) return;
+          patchItem(a, { project: v.trim() }, { project: v.trim() || undefined });
+        });
+
+        menuItem(menu, 'Rename…', '', async () => {
+          const v = await dialog({
+            title: 'Rename “' + a.slug + '”',
+            body: 'Changes the URL. Old links to this artifact stop working.',
+            input: true, value: a.slug, confirmText: 'Rename',
+          });
+          if (!v || v === a.slug) return;
+          patchItem(a, { slug: v }, {});
+        });
+
+        menuItem(menu, a.expiresAt ? 'Expiry: ' + a.expiresAt.slice(0, 10) + '…' : 'Expiry…', '', async () => {
+          const v = await dialog({
+            title: 'Expiry for “' + a.slug + '”',
+            body: 'e.g. 2026-08-01 or 2026-08-01T12:00. Leave empty to clear.',
+            input: true, value: a.expiresAt ? a.expiresAt.slice(0, 16) : '',
+          });
+          if (v === null) return;
+          patchItem(a, { expiresAt: v.trim() || null }, { expiresAt: v.trim() || undefined });
+        });
+
+        // Rotate the share link — only meaningful for a private/password artifact. A single
+        // epoch bump invalidates every link already handed out and every live unlock cookie.
+        if (nonPublic) {
+          menuItem(menu, 'Rotate link', '', async () => {
+            const ok = await dialog({
+              title: 'Rotate the link for “' + a.slug + '”?',
+              body: 'Every link you have already shared stops working. A new link is copied to your clipboard.',
+              confirmText: 'Rotate', danger: true,
+            });
+            if (!ok) return;
+            const d = await patchItem(a, { rotateToken: true }, {});
+            if (d && d.url) {
+              await navigator.clipboard.writeText(d.url).catch(() => {});
+              toast('Link rotated. New link copied.');
+            }
+          });
         }
-        loadList();
-      });
 
-      const tgl = actBtn(a.disabled ? 'Enable' : 'Disable', 'tgl');
-      tgl.addEventListener('click', async () => {
-        await fetch('/api/artifacts/' + a.slug, {
-          method: 'PATCH', headers: headers(), body: JSON.stringify({ disabled: !a.disabled }),
+        menuItem(menu, a.disabled ? 'Enable' : 'Disable', '', () => {
+          patchItem(a, { disabled: !a.disabled }, { disabled: !a.disabled || undefined });
         });
-        loadList();
-      });
 
-      const exp = actBtn('', 'exp');
-      exp.textContent = a.expiresAt
-        ? (expired ? 'expired' : 'expires ' + a.expiresAt.slice(0, 10))
-        : 'expiry';
-      exp.addEventListener('click', async () => {
-        const v = prompt(
-          'Expiry for “' + a.slug + '” (e.g. 2026-08-01 or 2026-08-01T12:00). Empty to clear.',
-          a.expiresAt ? a.expiresAt.slice(0, 16) : '');
-        if (v === null) return;
-        const res = await fetch('/api/artifacts/' + a.slug, {
-          method: 'PATCH', headers: headers(), body: JSON.stringify({ expiresAt: v.trim() || null }),
+        menuItem(menu, 'Delete', 'del', async () => {
+          const ok = await dialog({
+            title: 'Delete “' + a.slug + '”?',
+            body: 'This permanently removes the artifact.',
+            confirmText: 'Delete', danger: true,
+          });
+          if (!ok) return;
+          try {
+            const res = await fetch('/api/artifacts/' + a.slug, { method: 'DELETE', headers: headers() });
+            if (!res.ok) throw new Error();
+            allItems = allItems.filter((x) => x.slug !== a.slug);
+            renderList();
+          } catch {
+            toast('Delete failed.', true);
+          }
         });
-        if (!res.ok) {
-          const d = await res.json().catch(() => ({}));
-          alert(d.error || 'expiry update failed');
-        }
-        loadList();
       });
+      more.btn.title = 'More actions';
 
-      const del = actBtn('Delete', 'del');
-      del.addEventListener('click', async () => {
-        if (!confirm('Delete “' + a.slug + '”? This permanently removes the artifact.')) return;
-        await fetch('/api/artifacts/' + a.slug, { method: 'DELETE', headers: headers() });
-        loadList();
-      });
-
-      const more = document.createElement('div');
-      more.className = 'more';
-      const moreBtn = actBtn('⋯', 'more-btn');
-      moreBtn.setAttribute('aria-haspopup', 'true');
-      moreBtn.setAttribute('aria-expanded', 'false');
-      moreBtn.title = 'More actions';
-      const menu = document.createElement('div');
-      menu.className = 'menu';
-      more.append(moreBtn, menu);
-      moreBtn.addEventListener('click', () => {
-        const open = more.classList.toggle('open');
-        moreBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
-        actions.classList.toggle('menu-open', open);
-      });
-
-      // priority order: earlier actions stay inline; the tail overflows into ⋯
-      const priority = [copy, frm, vis, ...(rot ? [rot] : []), tagbtn, projBtn, ren, tgl, exp, del];
-      const n = Math.min(inlineN, priority.length);
-      priority.forEach((btn, i) => { (i < n ? actions : menu).appendChild(btn); });
-      if (n < priority.length) actions.appendChild(more);
-
+      actions.append(copy, view.wrap, more.wrap);
       item.append(body, actions);
       return item;
   }
 
-  $('search').addEventListener('input', renderList);
+  let searchT;
+  $('search').addEventListener('input', () => {
+    clearTimeout(searchT);
+    searchT = setTimeout(renderList, 120);
+  });
 
   function closeMenu(m) {
     m.classList.remove('open');
-    const acts = m.closest('.item-actions');
-    if (acts) acts.classList.remove('menu-open');
-    const btn = m.querySelector('.more-btn');
+    const btn = m.querySelector('[aria-haspopup]');
     if (btn) btn.setAttribute('aria-expanded', 'false');
   }
 
-  // close any open ⋯ menu on outside click or Escape
+  // close any open row menu on outside click or Escape
   document.addEventListener('click', (e) => {
     document.querySelectorAll('.more.open').forEach((m) => {
       if (!m.contains(e.target)) closeMenu(m);
@@ -1076,15 +1277,6 @@
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') document.querySelectorAll('.more.open').forEach(closeMenu);
-  });
-
-  // re-flow inline vs overflow actions when the width crosses a threshold
-  let resizeT;
-  window.addEventListener('resize', () => {
-    clearTimeout(resizeT);
-    resizeT = setTimeout(() => {
-      if (computeInlineCount() !== inlineN) renderList();
-    }, 150);
   });
 
   // ---- settings (global config) ----
@@ -1099,7 +1291,7 @@
     } catch {}
   }
 
-  $('saveSettings').addEventListener('click', async () => {
+  $('saveSettings').addEventListener('click', () => busy($('saveSettings'), 'Saving…', async () => {
     const body = { frame: { enabled: $('frameEnabled').checked, default: $('frameDefault').checked } };
     const el = $('settingsSaved');
     el.textContent = '';
@@ -1115,7 +1307,7 @@
     } catch {
       el.textContent = 'Save failed';
     }
-  });
+  }));
 
   // ---- api keys ----
 
@@ -1133,7 +1325,7 @@
     if (!keys.length) {
       const e = document.createElement('div');
       e.className = 'empty';
-      e.textContent = 'No keys yet — create one for your CLI or MCP client.';
+      e.textContent = 'No keys yet. Create one for your CLI or MCP client.';
       box.appendChild(e);
       return;
     }
@@ -1168,7 +1360,12 @@
     });
     const del = actBtn('Revoke', 'del');
     del.addEventListener('click', async () => {
-      if (!confirm('Revoke “' + k.name + '”? Any CLI/MCP client using it stops working.')) return;
+      const ok = await dialog({
+        title: 'Revoke “' + k.name + '”?',
+        body: 'Any CLI or MCP client using this key stops working.',
+        confirmText: 'Revoke', danger: true,
+      });
+      if (!ok) return;
       await fetch('/api/keys/' + k.id, { method: 'DELETE' });
       loadKeys();
     });
@@ -1178,7 +1375,7 @@
     return row;
   }
 
-  $('createKey').addEventListener('click', async () => {
+  $('createKey').addEventListener('click', () => busy($('createKey'), 'Creating…', async () => {
     const name = $('keyName').value.trim();
     const scopes = [];
     if ($('scopeRead').checked) scopes.push('read');
@@ -1196,7 +1393,7 @@
       const d = await res.json().catch(() => ({}));
       reveal.hidden = false;
       if (res.ok) {
-        reveal.textContent = 'Copy now — shown once: ' + d.key;
+        reveal.textContent = 'Copied to clipboard, shown once: ' + d.key;
         navigator.clipboard.writeText(d.key).catch(() => {});
         $('keyName').value = '';
         $('keyExpiry').value = '';
@@ -1208,7 +1405,7 @@
       reveal.hidden = false;
       reveal.textContent = 'Network error';
     }
-  });
+  }));
 
   // ---- app bar popovers + search reveal ----
 
