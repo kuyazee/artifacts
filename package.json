@@ -1,6 +1,6 @@
 {
   "name": "artifacts-host",
-  "version": "1.0.0",
+  "version": "1.3.0",
   "description": "Self-hosted publishable artifacts: POST HTML/JSX/Markdown/zip, get a public non-crawlable URL",
   "license": "MIT",
   "author": "Zonily Jame",
