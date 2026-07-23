@@ -9,10 +9,7 @@ Read the [README](README.md) and `docs/` before working on a feature.
 
 ## Writing docs (README, docs/, PR bodies, comments)
 
-Follow the org-wide prose rules in the parent `anvilnine/CLAUDE.md`: no em-dashes, no fake-count
-section titles, no filler adverbs, plain words over jargon, active voice, lead with the concrete
-thing. They apply to every prose surface here. Code, quoted errors, and config are exempt.
+Follow the org-wide prose rules in the parent `anvilnine/CLAUDE.md`.
 
-One mechanical check specific to this repo: before committing a README change, run
-`grep -n "—\|–" README.md` and confirm it returns nothing. The first README read as AI-generated,
-so re-read any doc change once and flatten anything that sounds like a brochure.
+Repo-specific check: before committing a README change, run `grep -n "—\|–" README.md` and confirm
+it returns nothing.
