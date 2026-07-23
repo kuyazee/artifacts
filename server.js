@@ -912,10 +912,12 @@ async function saveArtifact({ content, type = 'html', slug, title, expiresAt, fr
   const finalTitle = title || finalSlug;
   let html;
   if (type === 'html') html = content;
-  else if (type === 'md') html = buildMdHtml(content, finalTitle);
-  else html = buildJsxHtml(content, finalTitle);
+  else if (type === 'jsx' || type === 'tsx') html = buildJsxHtml(content, finalTitle);
+  // md renders at serve time from source.md; nothing baked here.
 
-  await storage.put(`${finalSlug}/index.html`, html, { contentType: 'text/html; charset=utf-8' });
+  if (html !== undefined) {
+    await storage.put(`${finalSlug}/index.html`, html, { contentType: 'text/html; charset=utf-8' });
+  }
   await storage.put(`${finalSlug}/source.${SOURCE_EXT[type]}`, content, {
     contentType: 'text/plain; charset=utf-8',
   });
@@ -1335,6 +1337,12 @@ app.get('/a/:slug', async (req, res) => {
       return res.redirect(301, `/a/${slug}/${wantsRaw ? '?raw=1' : ''}`);
     }
     return serveObject(req, res, `${slug}/site/index.html`);
+  }
+  if (meta.type === 'md') {
+    const buf = await storage.getBuffer(`${slug}/source.md`);
+    if (!buf) return notFound(res);
+    res.set('Cache-Control', 'no-cache'); // reflect global config changes on next view
+    return res.type('html').send(buildMdHtml(buf.toString('utf8'), meta.title || slug, config.md));
   }
   serveObject(req, res, `${slug}/index.html`);
 });
