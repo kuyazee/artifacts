@@ -547,6 +547,18 @@
               <input type="checkbox" id="frameDefault">
               <span>Frame on by default<span class="desc">Applied to artifacts with no per-item setting.</span></span>
             </label>
+            <label class="f">Reading font
+              <select id="mdFont"><option value="system">System</option><option value="serif">Serif</option><option value="mono">Mono</option></select>
+            </label>
+            <label class="f">Content width
+              <select id="mdWidth"><option value="narrow">Narrow</option><option value="normal">Normal</option><option value="wide">Wide</option></select>
+            </label>
+            <label class="f">Font size
+              <select id="mdSize"><option value="small">Small</option><option value="normal">Normal</option><option value="large">Large</option></select>
+            </label>
+            <label class="f">Default theme
+              <select id="mdTheme"><option value="auto">Auto</option><option value="light">Light</option><option value="dark">Dark</option></select>
+            </label>
             <div class="foot"><button id="saveSettings">Save settings</button><span class="saved" id="settingsSaved"></span></div>
           </div>
         </div>
@@ -1458,11 +1470,25 @@
       const cfg = await res.json();
       $('frameEnabled').checked = !!(cfg.frame && cfg.frame.enabled);
       $('frameDefault').checked = !!(cfg.frame && cfg.frame.default);
+      if (cfg.md) {
+        $('mdFont').value = cfg.md.font;
+        $('mdWidth').value = cfg.md.width;
+        $('mdSize').value = cfg.md.size;
+        $('mdTheme').value = cfg.md.theme;
+      }
     } catch {}
   }
 
   $('saveSettings').addEventListener('click', () => busy($('saveSettings'), 'Saving…', async () => {
-    const body = { frame: { enabled: $('frameEnabled').checked, default: $('frameDefault').checked } };
+    const body = {
+      frame: { enabled: $('frameEnabled').checked, default: $('frameDefault').checked },
+      md: {
+        font: $('mdFont').value,
+        width: $('mdWidth').value,
+        size: $('mdSize').value,
+        theme: $('mdTheme').value,
+      },
+    };
     const el = $('settingsSaved');
     el.textContent = '';
     try {

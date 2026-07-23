@@ -8,7 +8,29 @@ Served as-is on its own page. No processing.
 
 ## Markdown
 
-Rendered server-side (via marked) into a styled page. The original source stays available at `/a/:slug/source`.
+Rendered server-side (via marked) into a styled page. The original source stays available at `/a/:slug/source`. Markdown renders from its source on every view, so the settings below apply to existing artifacts the next time they load, with no re-publish.
+
+### Markdown render settings
+
+Four global knobs, set in the dashboard Settings popover or with `PUT /api/config`:
+
+- `md.font`: `system`, `serif`, or `mono`.
+- `md.width`: `narrow` (640px), `normal` (760px), or `wide` (900px).
+- `md.size`: `small`, `normal`, or `large` base font size.
+- `md.theme`: `auto` (follow the reader's OS), `light`, or `dark` as the starting theme.
+
+Example:
+
+```bash
+curl -s -X PUT https://artifacts.example.com/api/config \
+  -H "Authorization: Bearer $ARTIFACTS_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"md":{"font":"serif","width":"wide","size":"large","theme":"auto"}}'
+```
+
+A bad value on any key returns 400; absent keys keep their current value.
+
+When the viewer frame is on, a Markdown artifact gets a navbar button that cycles Auto, Light, and Dark. The choice is saved in that reader's browser and overrides `md.theme` for them only. With the frame off there is no button, and the artifact uses `md.theme` (and the reader's OS when that is `auto`).
 
 ## JSX/TSX artifacts
 

@@ -66,6 +66,29 @@ expect_code 200 "$code" "renamed artifact"
 code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/a/ci-smoke")
 expect_code 404 "$code" "old slug gone"
 
+# markdown render config -> defaults present in config
+curl -s "$BASE/api/config" -H "$AUTH" | grep -q '"font":"system"' || fail "config missing md.font default"
+echo "ok: md config defaults"
+
+# invalid md enum -> 400 (no write happens)
+code=$(curl -s -o /dev/null -w '%{http_code}' -X PUT "$BASE/api/config" -H "$AUTH" -H "$JSON" -d '{"md":{"font":"comic"}}')
+expect_code 400 "$code" "invalid md.font rejected"
+
+# publish md -> serve-time render carries the theme bootstrap and rendered body
+curl -sf -X POST "$BASE/api/artifacts" -H "$AUTH" -H "$JSON" \
+  -d '{"content":"# md smoke\n\nhi","type":"md","slug":"ci-md","visibility":"public"}' > /dev/null
+mdbody=$(curl -s "$BASE/a/ci-md?raw=1")
+echo "$mdbody" | grep -q '<h1>md smoke</h1>' || fail "md body not rendered"
+echo "$mdbody" | grep -q 'artifactTheme' || fail "md shell missing theme bootstrap"
+echo "ok: md serve-time render"
+
+# framed md -> navbar theme toggle present; a non-md artifact has none
+curl -s "$BASE/a/ci-md" | grep -q 'id="theme"' || fail "framed md missing theme toggle"
+if curl -s "$BASE/a/ci-smoke-2" | grep -q 'id="theme"'; then fail "non-md artifact has theme toggle"; fi
+echo "ok: md navbar theme toggle"
+
+curl -sf -X DELETE "$BASE/api/artifacts/ci-md" -H "$AUTH" > /dev/null
+
 # tags: publish with tags -> stored lowercased + deduped
 curl -sf -X POST "$BASE/api/artifacts" -H "$AUTH" -H "$JSON" \
   -d '{"content":"<h1>tags</h1>","type":"html","slug":"ci-tags","tags":["Demo","ci","demo"]}' > /dev/null
