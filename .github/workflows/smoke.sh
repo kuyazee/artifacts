@@ -169,6 +169,33 @@ expect_code 200 "$code" "zip asset"
 curl -s "$BASE/api/artifacts?tag=zipped" -H "$AUTH" | grep -q '"ci-zip"' || fail "zip tags not stored"
 echo "ok: zip tags"
 
+# duplicate: inline artifact copies content + inherits fields under a new slug
+dupresp=$(curl -s -X POST "$BASE/api/artifacts/ci-smoke-2/duplicate" -H "$AUTH" -H "$JSON" \
+  -d '{"slug":"ci-dup","title":"smoke copy","visibility":"public"}')
+echo "$dupresp" | grep -q '"ci-dup"' || fail "duplicate did not return new slug"
+body=$(curl -s "$BASE/a/ci-dup?raw=1")
+echo "$body" | grep -q "<h1>smoke</h1>" || fail "duplicate did not copy content"
+echo "ok: duplicate copies inline content"
+
+# duplicate: requesting a slug that already exists -> 409
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/artifacts/ci-smoke-2/duplicate" \
+  -H "$AUTH" -H "$JSON" -d '{"slug":"ci-dup"}')
+expect_code 409 "$code" "duplicate to taken slug rejected"
+
+# duplicate: zip site copies its files under the new slug
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/artifacts/ci-zip/duplicate" \
+  -H "$AUTH" -H "$JSON" -d '{"slug":"ci-zip-dup","visibility":"public"}')
+expect_code 201 "$code" "zip duplicate"
+code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/a/ci-zip-dup/css/s.css")
+expect_code 200 "$code" "zip duplicate asset served"
+
+# duplicate: omitted fields inherit from the source (ci-zip has tags zipped,site)
+curl -s "$BASE/api/artifacts" -H "$AUTH" | grep -q '"ci-zip-dup"' || fail "zip duplicate not listed"
+echo "ok: duplicate copies zip site + inherits fields"
+
+curl -sf -X DELETE "$BASE/api/artifacts/ci-dup" -H "$AUTH" > /dev/null
+curl -sf -X DELETE "$BASE/api/artifacts/ci-zip-dup" -H "$AUTH" > /dev/null
+
 # delete both -> 404
 curl -sf -X DELETE "$BASE/api/artifacts/ci-smoke-2" -H "$AUTH" > /dev/null
 curl -sf -X DELETE "$BASE/api/artifacts/ci-zip" -H "$AUTH" > /dev/null

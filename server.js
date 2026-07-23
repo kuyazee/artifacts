@@ -969,6 +969,77 @@ async function saveArtifact({ content, type = 'html', slug, title, expiresAt, fr
   return { slug: finalSlug, url: tokenedUrl(meta), visibility: meta.visibility || 'public' };
 }
 
+// Copy an existing artifact into a new slug. Content bytes (source.* / index.html / site/*)
+// are copied by the storage layer; a fresh meta.json is written last. Each meta field uses
+// the request body when provided, else inherits the source's value, so a copy keeps all of
+// the original's setup unless the caller overrides it. The view password cannot be inherited
+// (stored hashed), so a password-visibility copy requires a new password in the body.
+async function duplicateArtifact(sourceSlug, body = {}) {
+  if (!SLUG_RE.test(sourceSlug)) throw new ApiError(404, `slug "${sourceSlug}" not found`);
+  const source = await readMeta(sourceSlug);
+  if (!source) throw new ApiError(404, `slug "${sourceSlug}" not found`);
+
+  const targetSlug = body.slug || nanoid();
+  if (!SLUG_RE.test(targetSlug)) {
+    throw new ApiError(400, 'slug must match [a-z0-9][a-z0-9-]{2,63}');
+  }
+  if (await readMeta(targetSlug)) {
+    throw new ApiError(409, `slug "${targetSlug}" already exists`);
+  }
+
+  const title = body.title !== undefined ? (body.title || targetSlug) : (source.title || targetSlug);
+  const tagList = body.tags !== undefined ? parseTags(body.tags) : source.tags;
+  const projectName = body.project !== undefined ? parseProject(body.project) : source.project;
+  const expiry = body.expiresAt !== undefined ? parseExpiresAt(body.expiresAt) : source.expiresAt;
+
+  let frame;
+  if (body.frame !== undefined) {
+    if (body.frame !== null && typeof body.frame !== 'boolean') {
+      throw new ApiError(400, 'frame must be a boolean');
+    }
+    frame = body.frame === null ? undefined : body.frame; // null clears to inherit the global default
+  } else {
+    frame = source.frame;
+  }
+
+  const visibility = body.visibility !== undefined ? body.visibility : (source.visibility || 'public');
+  if (!VISIBILITIES.includes(visibility)) {
+    throw new ApiError(400, 'visibility must be public, private, or password');
+  }
+  if (visibility === 'password' && (typeof body.password !== 'string' || !body.password)) {
+    throw new ApiError(400, 'password is required when visibility is "password"');
+  }
+
+  // Copy content first; meta.json is written LAST as the commit marker (copySlug skips it).
+  await storage.copySlug(sourceSlug, targetSlug);
+
+  const meta = {
+    slug: targetSlug,
+    type: source.type,
+    title,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  if (source.type === 'zip' && typeof source.files === 'number') meta.files = source.files;
+  if (expiry !== undefined) meta.expiresAt = expiry;
+  if (tagList && tagList.length) meta.tags = tagList;
+  if (projectName) meta.project = projectName;
+  if (frame !== undefined) meta.frame = frame;
+  if (visibility === 'password') {
+    meta.visibility = 'password';
+    meta.password = await hashPassword(body.password);
+  } else if (visibility === 'private') {
+    meta.visibility = 'private';
+  }
+  seedTokenEpoch(meta);
+  await storage.put(`${targetSlug}/meta.json`, JSON.stringify(meta, null, 2), {
+    contentType: 'application/json',
+  });
+  await storage.flush?.();
+  if (meta.tokenEpoch !== undefined) await ensureSessionSecret();
+  return { slug: targetSlug, url: tokenedUrl(meta), visibility: meta.visibility || 'public' };
+}
+
 // A non-public artifact carries a non-secret epoch so capability tokens can be minted and
 // revoked; a public one carries none. Seed once; never reset a live epoch to 0 (that would
 // silently un-revoke). Idempotent, so every write path can call it.
@@ -1318,7 +1389,10 @@ app.get('/a/:slug', async (req, res) => {
   }
   // Framed view: serve the wrapper page (toolbar + iframe → ?raw=1). `?raw=1`
   // is the escape hatch the iframe uses to load the bare artifact.
-  const wantsRaw = req.query.raw !== undefined;
+  // A sub-frame load (the toolbar iframe, and any navigation the user makes inside it) carries
+  // Sec-Fetch-Dest: iframe. Treat those as raw so an in-artifact link back to the root does not
+  // re-enter the frame branch and stack a second toolbar. Top-level visits still get the frame.
+  const wantsRaw = req.query.raw !== undefined || req.get('sec-fetch-dest') === 'iframe';
   if (frameActive(meta) && !wantsRaw) {
     if (meta.type === 'zip' && !req.path.endsWith('/')) {
       return res.redirect(301, `/a/${slug}/`);
@@ -1487,6 +1561,14 @@ app.get('/api/artifacts/:slug/link', requireAuth('read'), async (req, res, next)
     if (!meta) throw new ApiError(404, `slug "${req.params.slug}" not found`);
     if (meta.tokenEpoch !== undefined) await ensureSessionSecret();
     res.json({ url: tokenedUrl(meta), visibility: meta.visibility || 'public' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/artifacts/:slug/duplicate', requireAuth('publish'), async (req, res, next) => {
+  try {
+    res.status(201).json(await duplicateArtifact(req.params.slug, req.body));
   } catch (err) {
     next(err);
   }
