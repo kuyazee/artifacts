@@ -71,6 +71,7 @@
 <body>
   <div id="bar">
     <span id="title">{{TITLE}}</span>
+    {{THEME_BTN}}
     <button id="copy" type="button" title="Copy link to this artifact">Copy link</button>
     <button id="hide" type="button" title="Hide this frame">&#9650; Hide</button>
   </div>
@@ -108,6 +109,33 @@
         done();
       }
     });
+
+    var themeBtn = document.getElementById('theme');
+    if (themeBtn) {
+      var THEME_KEY = 'artifactTheme';
+      var order = ['auto', 'light', 'dark'];
+      var labels = { auto: 'Auto', light: 'Light', dark: 'Dark' };
+      var cur;
+      try { cur = localStorage.getItem(THEME_KEY) || 'auto'; } catch (e) { cur = 'auto'; }
+      if (order.indexOf(cur) < 0) cur = 'auto';
+
+      function renderTheme() { themeBtn.textContent = labels[cur]; }
+      function pushTheme() {
+        try { localStorage.setItem(THEME_KEY, cur); } catch (e) {}
+        var f = document.getElementById('frame');
+        if (f && f.contentWindow) {
+          f.contentWindow.postMessage({ artifactTheme: cur }, location.origin);
+        }
+      }
+      renderTheme();
+      themeBtn.addEventListener('click', function () {
+        cur = order[(order.indexOf(cur) + 1) % order.length];
+        renderTheme();
+        pushTheme();
+      });
+      // Re-send once the iframe finishes loading, in case it loaded before the first push.
+      document.getElementById('frame').addEventListener('load', pushTheme);
+    }
   </script>
 </body>
 </html>

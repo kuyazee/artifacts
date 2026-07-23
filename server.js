@@ -644,9 +644,13 @@ function buildMdHtml(source, title, mdCfg = config.md) {
 function buildFrameHtml(meta, rawUrl) {
   const title = escapeHtml(meta.title || meta.slug);
   const url = escapeHtml(rawUrl);
+  const themeBtn = meta.type === 'md'
+    ? '<button id="theme" type="button" title="Cycle theme (auto, light, dark)">Auto</button>'
+    : '';
   return FRAME_SHELL
     .replaceAll('{{TITLE}}', () => title)
-    .replaceAll('{{RAW_URL}}', () => url);
+    .replaceAll('{{RAW_URL}}', () => url)
+    .replace('{{THEME_BTN}}', () => themeBtn);
 }
 
 // Unlock prompt for password-mode artifacts. Renders no title and no mode label so it
