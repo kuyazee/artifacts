@@ -35,6 +35,12 @@ export async function create() {
     'UPDATE artifacts SET key = ? || substr(key, ?) WHERE key >= ? AND key < ?',
   );
   const deleteStmt = db.prepare('DELETE FROM artifacts WHERE key >= ? AND key < ?');
+  const copyStmt = db.prepare(
+    'INSERT INTO artifacts (key, data, content_type) ' +
+      'SELECT ? || substr(key, ?), data, content_type FROM artifacts ' +
+      'WHERE key >= ? AND key < ? AND key <> ? ' +
+      'ON CONFLICT(key) DO UPDATE SET data = excluded.data, content_type = excluded.content_type',
+  );
 
   const driver = {
     kind: 'sqlite',
@@ -64,6 +70,10 @@ export async function create() {
 
     move(oldSlug, newSlug) {
       moveStmt.run(newSlug, oldSlug.length + 1, `${oldSlug}/`, `${oldSlug}0`);
+    },
+
+    copySlug(srcSlug, dstSlug) {
+      copyStmt.run(dstSlug, srcSlug.length + 1, `${srcSlug}/`, `${srcSlug}0`, `${srcSlug}/meta.json`);
     },
 
     deleteSlug(slug) {

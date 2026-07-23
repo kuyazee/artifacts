@@ -247,6 +247,17 @@ export async function create() {
       await deleteKeys(metaFirstForDelete);
     },
 
+    // Copy every content object under src/ to dst/, skipping src/meta.json (the caller writes
+    // the copy's meta last). Server-side CopyObject keeps bytes off this process.
+    async copySlug(srcSlug, dstSlug) {
+      const keys = await listKeys(srcSlug);
+      for (const key of keys) {
+        if (key === `${srcSlug}/meta.json`) continue;
+        const rel = key.slice(srcSlug.length + 1);
+        await copyObject(key, `${dstSlug}/${rel}`);
+      }
+    },
+
     async deleteSlug(slug) {
       const keys = await listKeys(slug);
       const meta = `${slug}/meta.json`;

@@ -66,6 +66,18 @@ export async function create() {
       );
     },
 
+    async copySlug(srcSlug, dstSlug) {
+      // Copy content rows under src/ to dst/, rewriting the slug prefix; skip src/meta.json
+      // so the caller writes the copy's meta last (the commit marker).
+      await q(
+        'INSERT INTO artifacts (key, data, content_type) ' +
+          'SELECT $1 || substr(key, $2), data, content_type FROM artifacts ' +
+          'WHERE key COLLATE "C" >= $3 AND key COLLATE "C" < $4 AND key <> $5 ' +
+          'ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, content_type = EXCLUDED.content_type',
+        [dstSlug, srcSlug.length + 1, `${srcSlug}/`, `${srcSlug}0`, `${srcSlug}/meta.json`],
+      );
+    },
+
     async deleteSlug(slug) {
       await q('DELETE FROM artifacts WHERE key COLLATE "C" >= $1 AND key COLLATE "C" < $2', [`${slug}/`, `${slug}0`]);
     },

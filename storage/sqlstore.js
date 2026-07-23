@@ -26,6 +26,7 @@ function toBuffer(data) {
 //   put(key, buf, contentType) -> Promise<void>   (upsert)
 //   listMetas()      -> Promise<[{slug, buffer}]>
 //   move(oldSlug, newSlug) -> Promise<void>
+//   copySlug(srcSlug, dstSlug) -> Promise<void>
 //   deleteSlug(slug) -> Promise<void>
 //   init()           -> Promise<void>             (create table + connectivity probe)
 //   close?()         -> Promise<void>
@@ -67,6 +68,12 @@ export function makeSqlStore(driver) {
       assertSafeKey(oldSlug);
       assertSafeKey(newSlug);
       await driver.move(oldSlug, newSlug);
+    },
+
+    async copySlug(srcSlug, dstSlug) {
+      assertSafeKey(srcSlug);
+      assertSafeKey(dstSlug);
+      await driver.copySlug(srcSlug, dstSlug);
     },
 
     async deleteSlug(slug) {

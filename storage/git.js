@@ -205,6 +205,7 @@ export async function create() {
     listMetas: () => files.listMetas(),
     put: (key, data, opts) => files.put(key, data, opts),
     move: (oldSlug, newSlug) => files.move(oldSlug, newSlug),
+    copySlug: (src, dst) => files.copySlug(src, dst),
     deleteSlug: (slug) => files.deleteSlug(slug),
 
     // Commit the completed write and push it, serialized so two operations never race the

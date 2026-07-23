@@ -123,6 +123,19 @@ export async function createAt(root) {
       await fs.rename(resolveKey(oldSlug), resolveKey(newSlug));
     },
 
+    // Copy a whole namespace's content objects to a new slug. Skips the top-level
+    // meta.json so the caller can write the copy's meta LAST (the commit marker) — a crash
+    // mid-copy then leaves the destination invisible (no meta), never half-served.
+    async copySlug(srcSlug, dstSlug) {
+      const absSrc = resolveKey(srcSlug);
+      const absDst = resolveKey(dstSlug);
+      const skipMeta = path.join(absSrc, 'meta.json');
+      await fs.cp(absSrc, absDst, {
+        recursive: true,
+        filter: (source) => source !== skipMeta,
+      });
+    },
+
     async deleteSlug(slug) {
       // meta.json first so a crash mid-delete leaves an invisible (404) namespace, never a
       // live artifact with missing files.

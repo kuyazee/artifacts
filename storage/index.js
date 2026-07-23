@@ -15,6 +15,7 @@
 //     put(key, data, { contentType })                            // MUST await a durable write
 //     listMetas()               -> [{ slug, buffer }]            // every artifact's meta.json
 //     move(oldSlug, newSlug)                                     // rename a whole namespace
+//     copySlug(srcSlug, dstSlug)                                 // copy a namespace's content objects (NOT meta.json)
 //     deleteSlug(slug)                                           // remove a whole namespace
 //     flush?()                  // optional: durably commit a completed write (git)
 //   }
