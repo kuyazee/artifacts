@@ -11,7 +11,9 @@ Read the [README](README.md) and `docs/` before working on a feature.
 
 Write like a person explaining the tool to another developer, not like a model producing marketing
 copy. The first README read as AI-generated; these rules keep it from happening again. They apply to
-every prose surface in this repo. Code, quoted errors, and config are exempt.
+every prose surface in this repo. Code, quoted errors, and config are exempt. The same rules apply
+org-wide across every Anvil Nine repo (see the parent `anvilnine/CLAUDE.md`); the repo-specific notes
+below stay here because they travel with this checkout.
 
 Banned patterns (all appeared in the old README):
 
